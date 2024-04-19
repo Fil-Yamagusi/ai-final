@@ -1,0 +1,4 @@
+/.idea
+/.venv
+/_src
+/auth.py
