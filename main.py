@@ -11,10 +11,10 @@ https://t.me/fil_fc_ai_pa_bot
 __version__ = '0.1'
 __author__ = 'Firip Yamagusi'
 
-import string
+
 # standard
 from time import time_ns, strftime
-from re import sub, escape
+from random import randint
 
 # third-party
 import logging
@@ -29,6 +29,7 @@ from final_db import (
     create_db,
     is_limit,
     create_user,
+    update_user,
 )
 
 if MAIN['test_mode']:  # Настройки для этапа тестирования
@@ -67,10 +68,8 @@ logging.warning(f"TB: start: {TB['BOT_NAME']} | {TB['TOKEN']}")
 # Пустое меню, может пригодиться
 hideKeyboard = ReplyKeyboardRemove()
 
-# fake user_data to check is_limit
+# Словарь с пользователями в памяти, чтобы не мучить БД
 user_data = {}
-user_data[666] = {}
-user_data[666]['user_id'] = 777
 
 
 def check_user(m):
@@ -88,6 +87,8 @@ def check_user(m):
         user_data[user_id]['user_id'] = user_id
         # У некоторых пользователей ерунда в имени.
         user_data[user_id]['user_name'] = m.from_user.first_name
+        user_data[user_id]['age'] = 20
+
         # но в БД добавим только с учётом ограчений из конфига
         if not create_user(db_conn, user_data[user_id]):
             bot.send_message(
@@ -106,6 +107,7 @@ def check_user(m):
 def handle_start(m: Message):
     """
     Обработчик команды /start
+    Подсказка самого быстрого начала
     """
     user_id = m.from_user.id
     check_user(m)
@@ -114,7 +116,82 @@ def handle_start(m: Message):
     bot.send_message(
         user_id,
         '✌🏻 <b>Привет! Я — бот с искусственным интеллектом.</b>\n\n'
-        'Помогу тебе составить план дел на лето.\n\n'
+        'Помогу тебе составить план дел на лето. Начни с команды /profile,'
+        'а потом переходи к обсуждению новых дел: /idea\n\n'
+        'Готовый список дел смотри в /show_plan\n\n'
+        'Подробнее про все команды: /help',
+        parse_mode='HTML',
+        reply_markup=hideKeyboard)
+
+
+@bot.message_handler(commands=['profile'])
+def handle_profile(m: Message):
+    """
+    Обработчик команды /profile
+    Пользователь укажет подробности о себе, чтобы ИИ-советы были полезнее
+    """
+    user_id = m.from_user.id
+    check_user(m)
+
+    # Исходное приветствие
+    bot.send_message(
+        user_id,
+        'Сообщи текстом или голосом, сколько тебе лет. '
+        'Можешь ответить просто '
+        '<i>учусь в 10 классе</i> или <i>я на 2 курсе</i>.',
+        parse_mode='HTML',
+        reply_markup=hideKeyboard)
+    bot.register_next_step_handler(m, process_profile)
+
+def process_profile(m: Message):
+    """
+    пользователь сообщил текстом или голосом, сколько тебе лет.
+    """
+    global db_conn, user_data
+    user_id = m.from_user.id
+    check_user(m)
+
+    if m.voice:
+        bot.send_message(
+            user_id,
+            f"process_profile ГОЛОСОМ {user_id}",
+            reply_markup=hideKeyboard)
+        file_id = m.voice.file_id
+        print(f"{file_id}")
+        file_info = bot.get_file(file_id)
+        print(f"{file_info}")
+        downloaded_file = bot.download_file(file_info.file_path)
+        print(f"{downloaded_file}")
+
+    if m.text:
+        bot.send_message(
+            user_id,
+            f"process_profile ТЕКСТОМ {user_id}",
+            reply_markup=hideKeyboard)
+
+    user_data[user_id]['user_age'] = randint(12, 42)
+    print(user_data[user_id])
+    update_user(db_conn, user_data[user_id])
+
+
+@bot.message_handler(commands=['idea'])
+def handle_idea(m: Message):
+    """
+    Обработчик команды /idea
+    Здесь в пошаговом режиме обсуждаем с ИИ новую идею.
+    При необходимости добавляем её в список дел
+    """
+    user_id = m.from_user.id
+    check_user(m)
+
+    # Исходное приветствие
+    bot.send_message(
+        user_id,
+        'Сейчас придумаем тебе новое задание на лето!\n\n'
+        'Пришли текстом или голосом, чем ты увлекаешься. '
+        'Например: <i>Я люблю кататься на велосипеде!</i>, '
+        'а я предложу задание. '
+        'Если оно тебе понравится, пришли '
         'Подробнее про все команды: /help',
         parse_mode='HTML',
         reply_markup=hideKeyboard)

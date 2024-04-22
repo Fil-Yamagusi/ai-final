@@ -16,3 +16,7 @@ __author__ = 'Firip Yamagusi'
 # custom
 # для авторизации и для ограничений
 from config import MAIN, TB, YANDEX, LIM
+
+
+def ask_speech_kit_stt(user: dict, downloaded_file):
+    pass

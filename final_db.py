@@ -46,7 +46,8 @@ def create_db(db_conn):
         'id INTEGER PRIMARY KEY AUTOINCREMENT, '
         'user_id INTEGER NOT NULL, '
         'user_name TEXT NOT NULL, '
-        'datetime TEXT NOT NULL '
+        'datetime TEXT NOT NULL, '
+        'user_age INTEGER NOT NULL'
         ')'
     )
 
@@ -224,8 +225,7 @@ def is_limit(db_conn, **kwargs):
 
 def create_user(db_conn, user):
     """
-    Пробуем все проверки в одной функции сделать
-    user - про кого спрашиваем, но иногда это не надо
+    Добавляем пользователя в БД с учётом ограничений
     """
 
     user_id = user['user_id']
@@ -252,6 +252,20 @@ def create_user(db_conn, user):
         db_conn.commit()
         logging.warning(f"DB: create_user: New user is created {user_id}")
         return True
+
+
+def update_user(db_conn, user):
+    """
+    Обновляем данные о пользователе
+    """
+    print(user['user_id'], user['user_name'], user['user_age'])
+    query = ('UPDATE Users '
+             'SET user_name = ?, user_age = ? '
+             'WHERE user_id = ?;')
+    cursor = db_conn.cursor()
+    cursor.execute(query,
+                   (user['user_name'], user['user_age'], user['user_id']))
+    db_conn.commit()
 
 
 def get_total_symbols(db_connection) -> int:
