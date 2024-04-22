@@ -2,3 +2,4 @@
 /.venv
 /_src
 /auth.py
+/_draft.py
