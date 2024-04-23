@@ -33,9 +33,14 @@ from final_db import (
     create_user,
     update_user,
     add_file2remove,
+    insert_tts,
 )
 from final_stt import (
     ask_speech_recognition,
+    ask_speech_kit_stt,
+)
+from final_tts import (
+    ask_speech_kit_tts,
 )
 from final_gpt import (
     count_tokens,
@@ -319,37 +324,76 @@ def process_test_tts(m: Message):
             reply_markup=hideKeyboard)
         return
 
-    tokens = count_tokens(m.text)
+    symbols = len(m.text)
 
-    r1, r2 = is_limit(db_conn, param_name='P_TTS_SYMBOLS', user=user_data[user_id])
+    r1, r2 = is_limit(db_conn,
+                      param_name='P_TTS_SYMBOLS', user=user_data[user_id])
     # Уже превышен или будет превышен?
-    if r1 or (r2 + tokens) > LIM['P_TTS_SYMBOLS']['value']:
+    if r1 or (r2 + symbols) > LIM['P_TTS_SYMBOLS']['value']:
         bot.send_message(
             user_id,
             f"СТОП! Будет превышен лимит P_TTS_SYMBOLS "
             f"{LIM['P_TTS_SYMBOLS']['descr']}\n"
-            f"(r[1] + {tokens}) / {LIM['P_TTS_SYMBOLS']['value']}",
+            f"(r[1] + {symbols}) / {LIM['P_TTS_SYMBOLS']['value']}",
             reply_markup=hideKeyboard)
         return
 
-    r1, r2 = is_limit(db_conn, param_name='U_TTS_SYMBOLS', user=user_data[user_id])
+    r1, r2 = is_limit(db_conn,
+                      param_name='U_TTS_SYMBOLS', user=user_data[user_id])
     # Уже превышен или будет превышен?
-    if r1 or (r2 + tokens) > LIM['U_TTS_SYMBOLS']['value']:
+    if r1 or (r2 + symbols) > LIM['U_TTS_SYMBOLS']['value']:
         bot.send_message(
             user_id,
             f"СТОП! Будет превышен лимит U_TTS_SYMBOLS "
             f"{LIM['U_TTS_SYMBOLS']['descr']}\n"
-            f"(r[1] + {tokens}) / {LIM['U_TTS_SYMBOLS']['value']}",
+            f"(r[1] + {symbols}) / {LIM['U_TTS_SYMBOLS']['value']}",
             reply_markup=hideKeyboard)
         return
 
     bot.send_message(
         user_id,
         f"Передаю в обработку...\n\n"
-        f"символов: <b>{tokens}</b>\n"
+        f"символов: <b>{symbols}</b>\n"
         f"текст: <i>{m.text}</i>\n",
         parse_mode='HTML',
         reply_markup=hideKeyboard)
+
+    success, response = ask_speech_kit_tts(m.text)
+    if success:
+        insert_tts(db_conn, user_data[user_id], m.text, symbols)
+
+        # Если все хорошо, сохраняем аудио в файл
+        # audio_name = f"voice/tts-{user_id}.ogg"
+        # with open(audio_name, "wb") as f:
+        #     f.write(response)
+        # with open(audio_name, "rb") as f:
+        #     bot.send_audio(user_id, f)
+        #     f.close()
+        # add_file2remove(db_conn, user_data[user_id], audio_name)
+        try:
+            bot.send_audio(user_id, response, title='Проверка Text-to-Speech',
+                           caption='Запусти аудиофайл. Проверь звук, если не '
+                                   'слышно. Проверяй расход командой /stat')
+            logging.debug(f"MAIN: process_test_tts: OK for {user_id}")
+        except Exception as e:
+            logging.warning(f"MAIN: process_test_tts: {e} for {user_id}")
+
+    else:
+        # Если возникла ошибка, выводим сообщение
+        logging.warning(f"MAIN: process_test_tts: not success: {response}")
+        bot.send_message(
+            user_id,
+            f"Ошибка Yandex SpeechKit: <b>{response}</b>",
+            parse_mode="HTML",
+            reply_markup=hideKeyboard)
+        return
+
+    # bot.send_message(
+    #     user_id,
+    #     f'Запусти аудиофайл. Проверь звук, если ничего не слышно.\n'
+    #     f'Проверяй расход командой /stat',
+    #     parse_mode="HTML",
+    #     reply_markup=hideKeyboard)
 
 
 @bot.message_handler(commands=['test_stt'])
@@ -450,7 +494,7 @@ def append_stat(stat: list, param_name: str, user: dict) -> list:
     r1, r2 = is_limit(db_conn, param_name=param_name, user=user)
 
     stat.append(f"{LIM[param_name]['descr']}:")
-    stat.append(f"<b>{int(100* r2 / LIM[param_name]['value'])}</b>% "
+    stat.append(f"<b>{int(100 * r2 / LIM[param_name]['value'])}</b>% "
                 f"({r2} / {LIM[param_name]['value']})")
 
     return stat

@@ -13,6 +13,7 @@ __author__ = 'Firip Yamagusi'
 from requests import post
 
 # third-party
+import logging
 from freeGPT import Client, AsyncClient
 
 # custom
@@ -73,62 +74,3 @@ def count_tokens(text):
             headers=headers
         ).json()['tokens']
     )
-
-
-def ask_speech_kit_tts(user: dict, text: str) -> tuple:
-    """
-    Запросы к SpeechKit СИНТЕЗ
-    Проверку на лимиты делаем в том месте, где вызывается функция
-    """
-
-    url = 'https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize'
-    headers = {
-        'Authorization': f"Bearer {YANDEX['IAM_TOKEN']}",
-    }
-    data = {
-        'text': text,  # что озвучиваем
-        'lang': 'ru-RU',  # язык текста - русский
-        'voice': 'filipp',  # голос Филиппа
-        'speed': 1.1,  # Скорость чтения
-        'emotion': 'good',  # эмоциональная окраска
-        'folderId': YANDEX['FOLDER_ID'],
-    }
-
-    try:
-        response = post(url, headers=headers, data=data)
-        if response.status_code == 200:
-            return True, response.content
-        else:
-            return False, f"Ошибка SpeechKit: код {response.status_code}"
-
-    except Exception as e:
-        logging.error(f"GPT: ask_speech_kit_tts: {e}")
-        return False, f"Ошибка SpeechKit: {e}"
-
-
-def ask_speech_kit_stt(user: dict, data):
-    """
-    Запросы к SpeechKit РАСПОЗНАВАНИЕ
-    Проверку на лимиты делаем в том месте, где вызывается функция
-    """
-
-    params = "&".join([
-        "topic=general",
-        f"folderId={YANDEX['FOLDER_ID']}",
-        "lang=ru-RU",
-    ])
-
-    url = f"https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?{params}"
-    headers = {'Authorization': f"Bearer {YANDEX['IAM_TOKEN']}"}
-
-    try:
-        response = post(url, headers=headers, data=data)
-        decoded_data = response.json()
-        if decoded_data.get('error_code') is None:
-            return True, decoded_data.get('result')
-        else:
-            return False, f"Ошибка SpeechKit: {decoded_data.get('error_code')}"
-
-    except Exception as e:
-        logging.error(f"GPT: ask_speech_kit_stt: {e}")
-        return False, f"Ошибка SpeechKit: {e}"

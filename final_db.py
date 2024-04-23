@@ -282,6 +282,7 @@ def update_user(db_conn, user):
 def add_file2remove(db_conn, user, file_path):
     """
     Добавить файл в очередь на удаление, удалить старые
+    Используется в /profile
     """
 
     cursor = db_conn.cursor()
@@ -304,3 +305,21 @@ def add_file2remove(db_conn, user, file_path):
                 logging.error(f"Error while deleting {r[0]} {r[1]}")
 
     db_conn.commit()
+
+
+def insert_tts(db_conn, user, content, symbols):
+    """
+    Функция для добавления в БД нового запроса TTS
+    """
+    cursor = db_conn.cursor()
+    try:
+        cursor.execute('INSERT INTO TTS '
+                       '(user_id, datetime, content, symbols) '
+                       'VALUES (?, ?, ?, ?);',
+                       (user['user_id'], strftime('%F %T'), content, symbols))
+        db_conn.commit()
+        logging.debug(f"DB: insert_tts: added id={cursor.lastrowid}")
+        return True, cursor.lastrowid
+    except sqlite3.IntegrityError:
+        logging.warning("DB: insert_tts: not added")
+        return False, None

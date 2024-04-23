@@ -10,8 +10,10 @@ __version__ = '0.1'
 __author__ = 'Firip Yamagusi'
 
 # standard
+from requests import post
 
 # third-party
+import logging
 import speech_recognition as sr
 
 # custom
@@ -21,6 +23,7 @@ from config import MAIN, TB, YANDEX, LIM
 
 def ask_speech_kit_stt(user: dict, downloaded_file):
     pass
+
 
 def ask_speech_recognition(wav_file: str):
     """
@@ -32,3 +35,30 @@ def ask_speech_recognition(wav_file: str):
         audio = r.record(source)
     result = r.recognize_google(audio, language="ru_RU")
     return result
+
+
+def ask_speech_kit_stt(data):
+    """
+    Запросы к SpeechKit РАСПОЗНАВАНИЕ
+    Проверку на лимиты делаем в том месте, где вызывается функция
+    """
+
+    params = "&".join([
+        "topic=general",
+        f"folderId={YANDEX['FOLDER_ID']}",
+        "lang=ru-RU",
+    ])
+
+    url = f"https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?{params}"
+    headers = {'Authorization': f"Bearer {YANDEX['IAM_TOKEN']}"}
+
+    try:
+        response = post(url, headers=headers, data=data)
+        decoded_data = response.json()
+        if decoded_data.get('error_code') is None:
+            return True, decoded_data.get('result')
+        else:
+            return False, f"Error SpeechKit: {decoded_data.get('error_code')}"
+
+    except Exception as e:
+        return False, f"Error SpeechKit: post {e}"
