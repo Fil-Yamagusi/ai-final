@@ -13,6 +13,7 @@ __author__ = 'Firip Yamagusi'
 from time import time_ns, time, strftime
 import logging
 import sqlite3
+from os import remove
 
 # third-party
 
@@ -108,6 +109,16 @@ def create_db(db_conn):
         ')'
     )
 
+    # Звуковые файлы для удаления
+    cursor.execute(
+        'CREATE TABLE IF NOT EXISTS Files2Remove ('
+        'id INTEGER PRIMARY KEY, '
+        'user_id INTEGER NOT NULL, '
+        'file_path TEXT NOT NULL, '
+        'timens_added INTEGER NOT NULL'
+        ')'
+    )
+
     try:
         r = db_conn.commit()
     except Exception as e:
@@ -119,6 +130,7 @@ def create_db(db_conn):
 
 def is_limit(db_conn, **kwargs):
     """
+    Возвращает кортеж: (Превышен ли лимит, текущее значение)
     Пробуем все проверки в одной функции сделать
     user - про кого спрашиваем, но иногда это не надо
     """
@@ -212,15 +224,15 @@ def is_limit(db_conn, **kwargs):
         logging.error(f"DB: is_limit {param_name} {e}")
 
     if res is None:
-        r, rr = False, None
+        r, rr = False, 0
     elif res[0] is None:
-        r, rr = False, None
+        r, rr = False, 0
     else:
         r, rr = res[0] >= param['value'], res[0]
     logging.debug(f"DB: {param_name} is_limit = {r}: "
                   f"{rr} / {param['value']} ({param['descr']})")
 
-    return r
+    return r, rr
 
 
 def create_user(db_conn, user):
@@ -258,7 +270,6 @@ def update_user(db_conn, user):
     """
     Обновляем данные о пользователе
     """
-    print(user['user_id'], user['user_name'], user['user_age'])
     query = ('UPDATE Users '
              'SET user_name = ?, user_age = ? '
              'WHERE user_id = ?;')
@@ -268,507 +279,28 @@ def update_user(db_conn, user):
     db_conn.commit()
 
 
-def get_total_symbols(db_connection) -> int:
+def add_file2remove(db_conn, user, file_path):
     """
-    Сколько уже потрачено символов синтеза речи всеми пользователями
+    Добавить файл в очередь на удаление, удалить старые
     """
-    cursor = db_connection.cursor()
-    query = ('SELECT sum(symbols) FROM TTS;')
 
-    try:
-        cursor.execute(query)
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_total_symbols None = 0")
-            logging.warning(f"get_total_symbols None = 0")
-            return 0
-        else:
-            # print(f"get_total_symbols {res[0]}")
-            logging.warning(f"All users have {res[0]} symbols")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def get_total_blocks(db_connection) -> int:
-    """
-    Сколько уже потрачено блоков распознавания текста всеми пользователями
-    """
-    cursor = db_connection.cursor()
-    query = ("SELECT sum(blocks) FROM STT WHERE model='SpeechKit';")
-
-    try:
-        cursor.execute(query)
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_total_blocks None = 0")
-            logging.warning(f"get_total_blocks None = 0")
-            return 0
-        else:
-            # print(f"get_total_blocks {res[0]}")
-            logging.warning(f"All users have {res[0]} blocks")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def get_user_symbols(db_connection, user) -> int:
-    """
-    Сколько уже потрачено символов синтеза речи у пользователя
-    """
-    cursor = db_connection.cursor()
-    query = ('SELECT sum(symbols) FROM TTS '
-             'WHERE user_id = ?;')
-
-    try:
-        cursor.execute(query, (user['user_id'],))
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_user_symbols None = 0")
-            logging.warning(f"get_user_symbols None = 0")
-            return 0
-        else:
-            # print(f"get_user_symbols {res[0]}")
-            logging.warning(f"User {user['user_id']} "
-                            f"has {res[0]} symbols")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def get_user_blocks(db_connection, user) -> int:
-    """
-    Сколько уже потрачено блоков распознавания речи у пользователя
-    """
-    cursor = db_connection.cursor()
-    query = ("SELECT sum(blocks) FROM STT "
-             "WHERE user_id = ? AND model='SpeechKit';")
-
-    try:
-        cursor.execute(query, (user['user_id'],))
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_user_blocks None = 0")
-            logging.warning(f"get_user_blocks None = 0")
-            return 0
-        else:
-            # print(f"get_user_blocks {res[0]}")
-            logging.warning(f"User {user['user_id']} "
-                            f"has {res[0]} blocks")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def get_user_tts_requests(db_connection, user) -> int:
-    """
-    Сколько запросов на синтез речи у пользователя
-    """
-    cursor = db_connection.cursor()
-    query = ('SELECT COUNT(id) FROM TTS '
-             'WHERE user_id = ?;')
-
-    try:
-        cursor.execute(query, (user['user_id'],))
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_user_tts_requests None = 0")
-            logging.warning(f"get_user_tts_requests None = 0")
-            return 0
-        else:
-            # print(f"get_user_tts_requests {res[0]}")
-            logging.warning(f"User {user['user_id']} "
-                            f"has {res[0]} tts requests")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def get_user_stt_requests(db_connection, user) -> int:
-    """
-    Сколько запросов на распознавание речи у пользователя
-    """
-    cursor = db_connection.cursor()
-    query = ("SELECT COUNT(id) FROM STT "
-             "WHERE user_id = ? AND model='SpeechKit';")
-
-    try:
-        cursor.execute(query, (user['user_id'],))
-        res = cursor.fetchone()
-
-        # Считаем, пустой результат - это отсутствие пользователя, а не ошибка
-        if res[0] is None:
-            # print(f"get_user_stt_requests None = 0")
-            logging.warning(f"get_user_stt_requests None = 0")
-            return 0
-        else:
-            # print(f"get_user_stt_requests {res[0]}")
-            logging.warning(f"User {user['user_id']} "
-                            f"has {res[0]} stt requests")
-            return res[0]
-    except Exception as e:
-        return 0
-
-
-def is_limit_symbols(db_connection, user_id):
-    """
-    Не превысили количество символов для пользователя?
-    """
-    global MAX_USER_SYMBOLS
-
-    return get_user_symbols(db_connection, user_id) >= MAX_USER_SYMBOLS
-
-
-def is_limit_blocks(db_connection, user_id):
-    """
-    Не превысили количество символов для пользователя?
-    """
-    global MAX_USER_STT_BLOCKS
-
-    return get_user_blocks(db_connection, user_id) >= MAX_USER_STT_BLOCKS
-
-
-def is_limit_total_symbols(db_connection):
-    """
-    Не превысили количество символов для всех пользователей?
-    """
-    global MAX_PROJECT_SYMBOLS
-
-    return get_total_symbols(db_connection) >= MAX_PROJECT_SYMBOLS
-
-
-def is_limit_total_blocks(db_connection):
-    """
-    Не превысили количество блоков для всех пользователей?
-    """
-    global MAX_PROJECT_STT_BLOCKS
-
-    return get_total_blocks(db_connection) >= MAX_PROJECT_STT_BLOCKS
-
-
-def is_limit_tokens_in_session(db_connection, user, t):
-    """
-    Можно ли ещё t токенов потратить?
-    """
-    global MAX_TOKENS_IN_SESSION
-
-    return (MAX_TOKENS_IN_SESSION <=
-            (get_tokens_in_session(db_connection, user) + t))
-
-
-def insert_tokenizer_info(db_connection, user, content, tokens):
-    """
-    Функция для добавления нового пользователя в базу данных.
-    """
-    cursor = db_connection.cursor()
-    logging.warning(f"Asking tokenizer for user_id={user['user_id']}... ")
-    data = (
-        user['user_id'],
-        user['session_id'],
-        time_ns(),
-        content,
-        tokens
-    )
-
-    try:
-        cursor.execute('INSERT INTO Tokenizer '
-                       '(user_id, session_id, t_start, content, tokens) '
-                       'VALUES (?, ?, ?, ?, ?);',
-                       data)
-        db_connection.commit()
-        logging.warning(f"... OK id={cursor.lastrowid}")
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        logging.warning("... Error")
-        return False
-
-
-def insert_full_story(db_connection, user, content):
-    """
-    Функция для добавления итогового сочинения
-    """
-    cursor = db_connection.cursor()
-    logging.warning(f"Saving full story of user_id={user['user_id']}... ")
-    data = (
-        user['user_id'],
-        user['session_id'],
-        content,
-    )
-
-    try:
-        cursor.execute('INSERT INTO Full_Stories '
-                       '(user_id, session_id, content) '
-                       'VALUES (?, ?, ?);',
-                       data)
-        db_connection.commit()
-        logging.warning(f"... OK id={cursor.lastrowid}")
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        logging.warning("... Error")
-        return False
-
-
-def get_full_story(db_connection):
-    """
-    Вернуть случайную историю, если есть
-    """
-    cursor = db_connection.cursor()
-    query = ('SELECT content FROM Full_Stories '
-             'ORDER BY RANDOM() LIMIT 1;')
-
-    cursor.execute(query)
-    res = cursor.fetchone()
-
-    # Считаем, что пустой результат - это отсутствие сессии, а не ошибка
-    if res is None:
-        logging.warning(f"get_full_story None = 0")
-        return "Нет готовых сочинений"
-    else:
-        logging.warning(f"Get Full Story")
-        return res[0]
-
-
-def insert_prompt(db_connection, user, role, content, tokens):
-    """
-    Функция для добавления нового промта в БД - для всех ролей
-    Значение tokens - накопительная сумма для этой сессии этого пользователя!
-    """
-    cursor = db_connection.cursor()
-    # В tokens накапливающуюся сумму, поэтому ищем последнюю известную
-    logging.warning(f"Finding the last prompt session_id={user['session_id']}")
-    tokens_prev = get_tokens_in_session(db_connection, user)
-
-    logging.warning(f"Adding prompt user_id={user['user_id']}, role={role}... ")
-    data = (
-        user['user_id'],
-        user['session_id'],
-        role,
-        content,
-        tokens + tokens_prev
-    )
-
-    try:
-        cursor.execute('INSERT INTO Prompts '
-                       '(user_id, session_id, role, content, tokens) '
-                       'VALUES (?, ?, ?, ?, ?);',
-                       data)
-        db_connection.commit()
-        logging.warning(f"... OK id={cursor.lastrowid}")
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        logging.warning("... Error")
-        return False
-
-
-def insert_tts(db_connection, user, content, symbols):
-    """
-    Функция для добавления в БД нового запроса TTS
-    """
-    cursor = db_connection.cursor()
-    logging.warning(f"Adding tts request user_id={user['user_id']},... ")
-    data = (
-        user['user_id'],
-        content,
-        symbols
-    )
-
-    try:
-        cursor.execute('INSERT INTO TTS '
-                       '(user_id, content, symbols) '
-                       'VALUES (?, ?, ?);',
-                       data)
-        db_connection.commit()
-        logging.warning(f"... OK id={cursor.lastrowid}")
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        logging.warning("... Error")
-        return False
-
-
-def insert_stt(
-        db_connection,
-        user: int, filename: str, content: str,
-        blocks: int, model: str, asr_time_ms: int):
-    """
-    Функция для добавления в БД нового запроса STT
-    """
-    cursor = db_connection.cursor()
-
-    data = (
-        user['user_id'],
-        filename,
-        content,
-        blocks,
-        model,
-        asr_time_ms,
-    )
-    try:
-        cursor.execute('INSERT INTO STT '
-                       '(user_id, filename, content, '
-                       'blocks, model, asr_time_ms) '
-                       'VALUES (?, ?, ?, ?, ?, ?);',
-                       data)
-        db_connection.commit()
-        logging.warning(f"Adding stt request user_id={user['user_id']},... "
-                        f"OK id={cursor.lastrowid}")
-        return cursor.lastrowid
-    except sqlite3.IntegrityError:
-        logging.warning(f"Adding stt request user_id={user['user_id']},... "
-                        f"Error")
-        return False
-
-
-def get_tokens_info(db_connection, user):
-    """
-    Информация о токенах для пользователя
-    """
-    result = []
-
-    result.append("\n<b>** КОНСТАНТЫ **</b>")
-    result.append(f"MAX_USERS = {MAX_USERS} - "
-                  f"макс. количество пользователей на весь проект")
-    result.append(f"MAX_SESSIONS = {MAX_SESSIONS} - "
-                  f"макс. количество сессий бота-сценариста у пользователя")
-    result.append(f"MAX_PROJECT_TOKENS = {MAX_PROJECT_TOKENS} - "
-                  f"макс. количество токенов суммарно на бота-сценариста")
-    result.append(f"MAX_TOKENS_IN_SESSION = {MAX_TOKENS_IN_SESSION} - "
-                  f"макс. количество токенов за сессию пользователя")
-
-    result.append(f"MAX_PROJECT_SYMBOLS = {MAX_PROJECT_SYMBOLS} - "
-                  f"макс. символов суммарно на синтез речи SpeechKit")
-    result.append(f"MAX_USER_SYMBOLS = {MAX_USER_SYMBOLS} - "
-                  f"макс. количество символов на пользователя")
-
-    result.append(f"MAX_PROJECT_STT_BLOCKS = {MAX_PROJECT_STT_BLOCKS} - "
-                  f"макс. блоков распознавания речи на весь проект")
-    result.append(f"MAX_USER_STT_BLOCKS = {MAX_USER_STT_BLOCKS} - "
-                  f"макс. блоков распознавания речи на пользователя")
-
-    result.append("\n<b>** СТАТИСТИКА ТВОЯ **</b>")
-
-    result.append("\n- <b><i>Бот-сценарист</i></b>:")
-
-    r = get_tokens_in_session(db_connection, user)
-    result.append(f"{r} - токенов в твоей текущей сессии")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT COUNT(id) FROM Sessions WHERE user_id = ?;'
-    cursor.execute(query, (user['user_id'],))
-    res = cursor.fetchone()
-    if res is None:
-        r = 0
-    else:
-        r = res[0]
-    result.append(f"{r} - сессий у тебя")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT DISTINCT (session_id) FROM Prompts WHERE user_id = ?;'
-    cursor.execute(query, (user['user_id'],))
-    res = cursor.fetchall()
-    r = 0
-    if res is not None:
-        session_ids = [row[0] for row in res]
-        for sid in session_ids:
-            query2 = 'SELECT max(tokens) FROM Prompts WHERE session_id= ? ;'
-            cursor.execute(query2, (sid,))
-            res2 = cursor.fetchone()
-            if res2 is not None:
-                r += res2[0]
-    result.append(f"{r} - всего токенов во всех твоих сессиях потрачено")
-
-    result.append("\n- <b><i>Синтез речи</i></b>:")
-
-    r = get_user_symbols(db_connection, user)
-    r2 = get_user_tts_requests(db_connection, user)
-    result.append(f"{r} - всего символов потрачено у тебя")
-    result.append(f"{r2} - запросов синтеза речи")
-
-    result.append("\n- <b><i>Распознавание речи</i></b>:")
-
-    r = get_user_blocks(db_connection, user)
-    r2 = get_user_stt_requests(db_connection, user)
-    result.append(f"{r} - всего блоков потрачено у тебя")
-    result.append(f"{r2} - запросов распознавания речи")
-
-    result.append("\n<b>** СТАТИСТИКА ОБЩАЯ **</b>")
-
-    result.append("\n- <b><i>Бот-сценарист</i></b>:")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT COUNT(DISTINCT user_id) FROM Sessions WHERE 1;'
-    cursor.execute(query)
-    res = cursor.fetchone()
-    if res is None:
-        r = 0
-    else:
-        r = res[0]
-    result.append(f"{r} - всего пользователей")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT COUNT(id) FROM Sessions WHERE 1;'
-    cursor.execute(query)
-    res = cursor.fetchone()
-    if res is None:
-        r = 0
-    else:
-        r = res[0]
-    result.append(f"{r} - всего сессий у всех пользователей")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT DISTINCT (session_id) FROM Prompts WHERE 1;'
+    cursor = db_conn.cursor()
+    query = ('INSERT INTO Files2Remove '
+             '(user_id, file_path, timens_added) '
+             'VALUES (?, ?, ?);')
+    cursor.execute(query, (user['user_id'], file_path, time_ns()))
+
+    old = time_ns() - 10 ** 9  # старше 1000 секунд
+    query = (f"SELECT id, file_path FROM Files2Remove WHERE "
+             f"timens_added <= {old} AND timens_deleted IS NULL;")
     cursor.execute(query)
     res = cursor.fetchall()
-    r = 0
     if res is not None:
-        session_ids = [row[0] for row in res]
-        for sid in session_ids:
-            query2 = 'SELECT max(tokens) FROM Prompts WHERE session_id= ? ;'
-            cursor.execute(query2, (sid,))
-            res2 = cursor.fetchone()
-            if res2 is not None:
-                r += res2[0]
-    result.append(
-        f"{r} ({(100 * r / MAX_PROJECT_TOKENS):2.2f}%) - "
-        f"всего токенов во всех сессиях потрачено")
+        for r in res:
+            try:
+                remove(r[1])
+                cursor.execute(f"DELETE FROM Files2Remove WHERE id={r[0]};")
+            except Exception as e:
+                logging.error(f"Error while deleting {r[0]} {r[1]}")
 
-    result.append("\n- <b><i>Синтез речи</i></b>:")
-
-    cursor = db_connection.cursor()
-    query = 'SELECT COUNT(DISTINCT user_id) FROM TTS WHERE 1;'
-    cursor.execute(query)
-    res = cursor.fetchone()
-    if res is None:
-        r = 0
-    else:
-        r = res[0]
-    result.append(f"{r} - всего пользователей")
-
-    r = get_total_symbols(db_connection)
-    result.append(f"{r} - всего символов у всех пользователей")
-
-    result.append("\n- <b><i>Распознавание речи</i></b>:")
-
-    cursor = db_connection.cursor()
-    query = "SELECT COUNT(DISTINCT user_id) FROM STT WHERE model='SpeechKit'"
-    cursor.execute(query)
-    res = cursor.fetchone()
-    if res is None:
-        r = 0
-    else:
-        r = res[0]
-    result.append(f"{r} - всего пользователей")
-
-    r = get_total_blocks(db_connection)
-    result.append(f"{r} - всего блоков у всех пользователей")
-
-    return result
+    db_conn.commit()
