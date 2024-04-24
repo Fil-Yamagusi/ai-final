@@ -185,7 +185,7 @@ def handle_profile(m: Message):
 
 def process_profile(m: Message):
     """
-    пользователь сообщил текстом или голосом, сколько ему лет.
+    пользователь сообщил текстом или голосом: сколько ему лет.
     Голос расшифровываем через speech_recognition
     Дальше фразу даём GPT, чтобы она предположила примерный возраст
     """
@@ -194,50 +194,20 @@ def process_profile(m: Message):
     check_user(m)
 
     if m.voice:
-        voice_err_msg = ("Не получается сохранить твоё голосовое сообщение. "
-                         "Попробуй чётче и короче 5 сек. Или текстом. /profile")
+        result = ""
         if m.voice.duration > 5:
-            bot.send_message(user_id, voice_err_msg, reply_markup=hideKeyboard)
-
-        # Сохраняем OGG
-        file_info = bot.get_file(m.voice.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        ogg_path = file_info.file_path
-        # Сохраняем себе
-        try:
-            with open(ogg_path, 'wb') as ogg_file:
-                ogg_file.write(downloaded_file)
-                add_file2remove(db_conn, user_data[user_id], ogg_path)
-                logging.debug(f"MAIN: process_profile: {user_id} {ogg_path}")
-        except Exception as e:
-            bot.send_message(user_id, voice_err_msg, reply_markup=hideKeyboard)
-            logging.error(f"MAIN: process_profile: {user_id} ogg_write {e}")
-            return
-
-        # переводим в WAV для speech_recognition
-        try:
-            wav_file = f"{ogg_path[0:-4]}.wav"
-            a_data, a_samplerate = sf.read(ogg_path)
-            sf.write(wav_file, a_data, a_samplerate)
-            add_file2remove(db_conn, user_data[user_id], wav_file)
-            logging.debug(f"MAIN: process_profile: {user_id} now is {wav_file}")
-        except Exception as e:
-            bot.send_message(user_id, voice_err_msg, reply_markup=hideKeyboard)
-            logging.error(f"MAIN: process_profile: {user_id} ogg2wav {e}")
-            return
-
-        # а вот и бесплатный speech_recognition. Блоки не считаем
-        try:
-            success, result = ask_speech_recognition(wav_file)
             bot.send_message(
                 user_id,
-                f"Я услышал: <i>{result}</i>",
-                parse_mode='HTML',
+                "Не получается сохранить твоё голосовое сообщение. "
+                "Попробуй чётче и короче 5 сек. Или текстом. /profile",
                 reply_markup=hideKeyboard)
-        except Exception as e:
-            bot.send_message(user_id, voice_err_msg, reply_markup=hideKeyboard)
-            logging.error(f"MAIN: process_profile: {user_id} sr {e}")
-            return
+
+        voice_obj = bot.get_file(m.voice.file_id)
+        success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
+
+        if success:
+            for r in res.keys():
+                result = res[r]['content']
 
     if m.text:
         result = m.text
@@ -253,23 +223,26 @@ def process_profile(m: Message):
                       f"Сколько ему лет? Ответь одним целым числом, без слов")
         # случайно sync or async
         if randint(0, 2):
-            res = run(ask_freegpt_async(model=gpt_model, prompt=gpt_prompt))
+            success, res = run(ask_freegpt_async(model=gpt_model, prompt=gpt_prompt))
         else:
-            res = ask_freegpt(model=gpt_model, prompt=gpt_prompt)
+            success, res = ask_freegpt(model=gpt_model, prompt=gpt_prompt)
 
-        print(res)
-        if res[0] and res[1].isdigit():
-            user_age = int(res[1])
+        logging.info(f"MAIN: process_profile ask_freegpt: {res}")
+        if success and res.isdigit():
+            user_age = int(res)
+            gpt_msg = ''
+        else:
+            gpt_msg = "☹️ Не получилось определить возраст с помощью GPT.\n"
         if not (10 <= user_age <= 75):
-            user_age = 71
+            user_age = 18
 
     user_data[user_id]['user_age'] = user_age
-
     update_user(db_conn, user_data[user_id])
+
     bot.send_message(
         user_id,
-        f"Я определил, что твой возраст: <b>{user_age}</b>. "
-        f"Если неправильно, попробуй указать свой возраст по-другому /profile",
+        f"{gpt_msg}Я запишу, что твой возраст: <b>{user_age}</b>. "
+        f"Если неправильно, напиши свой возраст просто числом: /profile",
         parse_mode='HTML',
         reply_markup=hideKeyboard)
 
@@ -560,8 +533,8 @@ def process_test_stt(m: Message):
 
     # Для SpeechKit достаточно звуковых данных
     voice_obj = bot.get_file(m.voice.file_id)
+    success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
 
-    success, res = voice_obj_to_text(m, voice_obj, all_modules=True)
     if success:
         result_msg = ""
         for r in res.keys():
