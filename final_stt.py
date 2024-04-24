@@ -21,19 +21,24 @@ import speech_recognition as sr
 from config import MAIN, TB, YANDEX, LIM
 
 
-def ask_speech_kit_stt(user: dict, downloaded_file):
-    pass
-
-
 def ask_speech_recognition(wav_file: str):
     """
     Функция для перевода аудио, в формате ".wav" в текст
     """
-    r = sr.Recognizer()
-    message = sr.AudioFile(wav_file)
-    with message as source:
+
+    with sr.AudioFile(wav_file) as source:
+        r = sr.Recognizer()
         audio = r.record(source)
-    result = r.recognize_google(audio, language="ru_RU")
+        try:
+            return True, r.recognize_google(audio, language="ru_RU")
+        except Exception as e:
+            return False, e
+
+    # r = sr.Recognizer()
+    # message = sr.AudioFile(wav_file)
+    # with message as source:
+    #     audio = r.record(source)
+    # result = r.recognize_google(audio, language="ru_RU")
     return result
 
 
@@ -56,9 +61,12 @@ def ask_speech_kit_stt(data):
         response = post(url, headers=headers, data=data)
         decoded_data = response.json()
         if decoded_data.get('error_code') is None:
+            logging.debug(decoded_data.get('result'))
             return True, decoded_data.get('result')
         else:
-            return False, f"Error SpeechKit: {decoded_data.get('error_code')}"
+            logging.warning(f"Error SpeechKit {decoded_data.get('error_code')}")
+            return False, f"Error SpeechKit {decoded_data.get('error_code')}"
 
     except Exception as e:
+        logging.warning(f"Error SpeechKit: post {e}")
         return False, f"Error SpeechKit: post {e}"

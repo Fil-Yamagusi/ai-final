@@ -20,7 +20,9 @@ from math import ceil
 # third-party
 import logging
 from telebot import TeleBot
-from telebot.types import ReplyKeyboardMarkup, ReplyKeyboardRemove, Message
+from telebot.types import (
+    ReplyKeyboardMarkup, ReplyKeyboardRemove,
+    Message, File)
 import soundfile as sf
 
 # custom
@@ -34,6 +36,7 @@ from final_db import (
     update_user,
     add_file2remove,
     insert_tts,
+    insert_stt,
 )
 from final_stt import (
     ask_speech_recognition,
@@ -93,6 +96,19 @@ mu_stop_test.add(*[t_stop_test])
 
 # Словарь с пользователями в памяти, чтобы не мучить БД
 user_data = {}
+
+
+def convert_ogg_to_wav(input_file: str, output_file: str) -> tuple:
+    """
+    Для бесплатного STT нужен WAV
+    https://pypi.org/project/soundfile/
+    """
+    try:
+        data, samplerate = sf.read(input_file)
+        sf.write(output_file, data, samplerate, format='WAV')
+        return True, output_file
+    except Exception as e:
+        return False, e
 
 
 def check_user(m):
@@ -212,7 +228,7 @@ def process_profile(m: Message):
 
         # а вот и бесплатный speech_recognition. Блоки не считаем
         try:
-            result = ask_speech_recognition(wav_file)
+            success, result = ask_speech_recognition(wav_file)
             bot.send_message(
                 user_id,
                 f"Я услышал: <i>{result}</i>",
@@ -228,7 +244,7 @@ def process_profile(m: Message):
 
     # Если возраст получили числом, то просто базовая проверка
     user_age = 17  # по умолчанию
-    if result.isdigit() and (12 <= int(result) <= 50):
+    if result.isdigit() and (10 <= int(result) <= 75):
         user_age = int(result)
     # иначе пробуем определить через GPT
     else:
@@ -236,15 +252,16 @@ def process_profile(m: Message):
         gpt_prompt = (f"Кто-то сказал про свой возраст: {result}. "
                       f"Сколько ему лет? Ответь одним целым числом, без слов")
         # случайно sync or async
-        if randint(0, 1):
+        if randint(0, 2):
             res = run(ask_freegpt_async(model=gpt_model, prompt=gpt_prompt))
         else:
             res = ask_freegpt(model=gpt_model, prompt=gpt_prompt)
 
+        print(res)
         if res[0] and res[1].isdigit():
             user_age = int(res[1])
-        if not (12 <= user_age <= 50):
-            user_age = 17
+        if not (10 <= user_age <= 75):
+            user_age = 71
 
     user_data[user_id]['user_age'] = user_age
 
@@ -291,7 +308,7 @@ def handle_test_tts(m: Message):
 
     bot.send_message(
         user_id,
-        f"<b>Проверка режима Text-to-speech Yandex SpeechKit</b>\n\n"
+        f"<b>Проверка режима Text-to-speech</b>\n\n"
         f"Пришли сообщение 50-150 символов, получи в ответ озвучку.\n"
         f"(или нажми <i>Отказаться от проверки</i>)\n\n"
         f"Проверка использует лимиты на символы: /stat ",
@@ -332,9 +349,9 @@ def process_test_tts(m: Message):
     if r1 or (r2 + symbols) > LIM['P_TTS_SYMBOLS']['value']:
         bot.send_message(
             user_id,
-            f"СТОП! Будет превышен лимит P_TTS_SYMBOLS "
+            f"СТОП! Будет превышен лимит P_TTS_SYMBOLS\n"
             f"{LIM['P_TTS_SYMBOLS']['descr']}\n"
-            f"(r[1] + {symbols}) / {LIM['P_TTS_SYMBOLS']['value']}",
+            f"({r2} + {symbols}) >= {LIM['P_TTS_SYMBOLS']['value']}",
             reply_markup=hideKeyboard)
         return
 
@@ -344,9 +361,9 @@ def process_test_tts(m: Message):
     if r1 or (r2 + symbols) > LIM['U_TTS_SYMBOLS']['value']:
         bot.send_message(
             user_id,
-            f"СТОП! Будет превышен лимит U_TTS_SYMBOLS "
+            f"СТОП! Будет превышен лимит U_TTS_SYMBOLS\n"
             f"{LIM['U_TTS_SYMBOLS']['descr']}\n"
-            f"(r[1] + {symbols}) / {LIM['U_TTS_SYMBOLS']['value']}",
+            f"({r2} + {symbols}) >= {LIM['U_TTS_SYMBOLS']['value']}",
             reply_markup=hideKeyboard)
         return
 
@@ -407,13 +424,98 @@ def handle_test_stt(m: Message):
 
     bot.send_message(
         user_id,
-        f"<b>Проверка режима Speech-to-text Yandex SpeechKit</b>\n\n"
+        f"<b>Проверка работы Speech-to-text</b>\n\n"
         f"Пришли голосовое сообщение 5-15 сек, получи в ответ текст.\n"
         f"(или нажми <i>Отказаться от проверки</i>)\n\n"
         f"Проверка использует лимиты на блоки (1 блок = 15 сек): /stat ",
         parse_mode='HTML',
         reply_markup=mu_stop_test)
     bot.register_next_step_handler(m, process_test_stt)
+
+
+def voice_obj_to_text(m: Message, voice_obj: File, all_modules: int) -> tuple:
+    """
+    Повторяющийся код для /test_stt, /idea, /profile...
+    Надо преобразовать voice из телеграма в словарь ответов.
+    Начинаем с бесплатного, если неудача, то платный.
+    Блоки STT проверяем только для платного.
+    all_modules = 0 означает выйти при первом же успешном рапознавании
+    """
+    user_id = m.from_user.id
+
+    # для SpeechRecognition нужен WAV
+    ogg_file_path = voice_obj.file_path
+    voice_file = bot.download_file(ogg_file_path)
+
+    with open(ogg_file_path, 'wb') as ogg_file:
+        ogg_file.write(voice_file)
+
+    wav_file_path = f"{ogg_file_path[0:-3]}wav"
+    wav_res = convert_ogg_to_wav(ogg_file_path, wav_file_path)[0]
+    add_file2remove(db_conn, user_data[user_id], ogg_file_path)
+    add_file2remove(db_conn, user_data[user_id], wav_file_path)
+
+    stt_blocks = ceil(m.voice.duration / 15)
+    logging.debug(f"MAIN: process_test_stt: {voice_obj.file_path} {stt_blocks}")
+
+    result = {}
+    # Бесплатный модуль SpeechRecognition
+    asr_start = time_ns()
+    success, res = ask_speech_recognition(wav_file_path)
+    asr_time_ms = (time_ns() - asr_start) // 1000000
+
+    # Проверяем успешность распознавания и выводим результат, сохраняем в БД
+    if success:
+        result['SpeechRecognition'] = {'content': res,
+                                       'asr_time_ms': asr_time_ms}
+        insert_stt(db_conn, user_data[user_id],
+                   wav_file_path, content=res,
+                   blocks=stt_blocks, model='SR',
+                   asr_time_ms=asr_time_ms)
+        if not all_modules:
+            return True, result
+    else:
+        logging.info(f"Модуль SpeechRecognition: не получилось распознать")
+
+    # Платный модуль SpeechKit. Перед ним нужно проверить лимиты
+    r1, r2 = is_limit(db_conn,
+                      param_name='P_STT_BLOCKS', user=user_data[user_id])
+    # Уже превышен или будет превышен?
+    if r1 or (r2 + stt_blocks) > LIM['P_STT_BLOCKS']['value']:
+        error_msg = (f"СТОП! Будет превышен лимит P_STT_BLOCKS\n"
+                     f"{LIM['P_STT_BLOCKS']['descr']}\n"
+                     f"({r2} + {stt_blocks}) >= {LIM['P_STT_BLOCKS']['value']}")
+        return False, {'error': error_msg}
+
+    r1, r2 = is_limit(db_conn,
+                      param_name='U_STT_BLOCKS', user=user_data[user_id])
+    # Уже превышен или будет превышен?
+    if r1 or (r2 + stt_blocks) > LIM['U_STT_BLOCKS']['value']:
+        error_msg = (f"СТОП! Будет превышен лимит U_STT_BLOCKS\n"
+                     f"{LIM['U_STT_BLOCKS']['descr']}\n"
+                     f"({r2} + {stt_blocks}) >= {LIM['U_STT_BLOCKS']['value']}")
+        return False, {'error': error_msg}
+
+    asr_start = time_ns()
+    success, res = ask_speech_kit_stt(voice_file)
+    # success, res = True, "SpeechKit закомментировал, идёт тест модуля SR"
+    asr_time_ms = (time_ns() - asr_start) // 1000000
+
+    # Проверяем успешность распознавания и выводим результат, сохраняем в БД
+    if success:
+        result['Yandex SpeechKit'] = {'content': res,
+                                      'asr_time_ms': asr_time_ms}
+        insert_stt(db_conn, user_data[user_id],
+                   ogg_file_path, content=res,
+                   blocks=stt_blocks, model='SpeechKit',
+                   asr_time_ms=asr_time_ms)
+        return True, result
+    elif result.get('SpeechRecognition'):
+        return True, result
+    else:
+        return False, {'error': res}
+
+    return False, {'error': 'Не получилось распознать голосовое сообщение'}
 
 
 def process_test_stt(m: Message):
@@ -448,41 +550,29 @@ def process_test_stt(m: Message):
             reply_markup=hideKeyboard)
         return
 
-    file_id = m.voice.file_id
-    file_info = bot.get_file(file_id)
-    # downloaded_file = bot.download_file(file_info.file_path)
-    stt_blocks = ceil(m.voice.duration / 15)
-    logging.info(f"MAIN: process_test_stt: {file_info} {stt_blocks}")
-
-    r1, r2 = is_limit(db_conn,
-                      param_name='P_STT_BLOCKS', user=user_data[user_id])
-    # Уже превышен или будет превышен?
-    if r1 or (r2 + stt_blocks) > LIM['P_STT_BLOCKS']['value']:
-        bot.send_message(
-            user_id,
-            f"СТОП! Будет превышен лимит P_STT_BLOCKS "
-            f"{LIM['P_STT_BLOCKS']['descr']}\n"
-            f"({r[1]} + {stt_blocks}) / {LIM['P_STT_BLOCKS']['value']}",
-            reply_markup=hideKeyboard)
-        return
-
-    r1, r2 = is_limit(db_conn,
-                      param_name='U_STT_BLOCKS', user=user_data[user_id])
-    # Уже превышен или будет превышен?
-    if r1 or (r2 + stt_blocks) > LIM['U_STT_BLOCKS']['value']:
-        bot.send_message(
-            user_id,
-            f"СТОП! Будет превышен лимит U_STT_BLOCKS "
-            f"{LIM['U_STT_BLOCKS']['descr']}\n"
-            f"({r[1]} + {stt_blocks}) / {LIM['U_STT_BLOCKS']['value']}",
-            reply_markup=hideKeyboard)
-        return
-
     bot.send_message(
         user_id,
         f"Передаю в обработку...\n\n"
-        f"блоков: <b>{stt_blocks}</b>\n"
-        f"длина: <i>{m.voice.duration} сек</i>\n",
+        f"блоков: <b>{ceil(m.voice.duration / 15)}</b>\n"
+        f"длина: <b>{m.voice.duration} сек</b>\n",
+        parse_mode='HTML',
+        reply_markup=hideKeyboard)
+
+    # Для SpeechKit достаточно звуковых данных
+    voice_obj = bot.get_file(m.voice.file_id)
+
+    success, res = voice_obj_to_text(m, voice_obj, all_modules=True)
+    if success:
+        result_msg = ""
+        for r in res.keys():
+            result_msg += (
+                f"Модуль <b>{r}</b> за {res[r]['asr_time_ms']} мс:\n"
+                f"<i>{res[r]['content']}</i>\n\n")
+    else:
+        result_msg = f"<b>Ошибка!</b>\n\n{res['error']}\n\n"
+    bot.send_message(
+        user_id,
+        f"{result_msg}Проверяй расход командой /stat",
         parse_mode='HTML',
         reply_markup=hideKeyboard)
 

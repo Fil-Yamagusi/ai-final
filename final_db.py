@@ -92,9 +92,12 @@ def create_db(db_conn):
         'CREATE TABLE IF NOT EXISTS STT ('
         'id INTEGER PRIMARY KEY AUTOINCREMENT, '
         'user_id INTEGER NOT NULL, '
+        'filename TEXT NOT NULL, '
         'datetime TEXT NOT NULL, '
-        'content TEXT, '
-        'blocks INT'
+        'content TEXT NOT NULL, '
+        'blocks INT, '
+        'model TEXT NOT NULL, '
+        'asr_time_ms INTEGER'
         ')'
     )
 
@@ -175,7 +178,7 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max блоков (STT) на весь проект',
     #     'value': 100, }
     if param_name == 'P_STT_BLOCKS':
-        query = 'SELECT sum(blocks) FROM STT;'
+        query = "SELECT sum(blocks) FROM STT WHERE model='SpeechKit';"
     #
     # # Ограничения GPT на пользователя
     # LIM['U_GPT_TOKENS'] = {
@@ -214,7 +217,8 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max блоков (STT) на пользователя',
     #     'value': 30, }
     if param_name == 'U_STT_BLOCKS':
-        query = ('SELECT sum(blocks) FROM STT WHERE user_id = ?;')
+        query = ("SELECT sum(blocks) FROM STT "
+                 "WHERE user_id = ? AND model='SpeechKit';")
         data = (user_id,)
 
     try:
@@ -228,7 +232,7 @@ def is_limit(db_conn, **kwargs):
     elif res[0] is None:
         r, rr = False, 0
     else:
-        r, rr = res[0] >= param['value'], res[0]
+        r, rr = (res[0] >= param['value']), res[0]
     logging.debug(f"DB: {param_name} is_limit = {r}: "
                   f"{rr} / {param['value']} ({param['descr']})")
 
@@ -291,18 +295,18 @@ def add_file2remove(db_conn, user, file_path):
              'VALUES (?, ?, ?);')
     cursor.execute(query, (user['user_id'], file_path, time_ns()))
 
-    old = time_ns() - 10 ** 9  # старше 1000 секунд
+    old = time_ns() - 10 ** 11  # старше 100 секунд
     query = (f"SELECT id, file_path FROM Files2Remove WHERE "
              f"timens_added <= {old} AND timens_deleted IS NULL;")
     cursor.execute(query)
     res = cursor.fetchall()
-    if res is not None:
-        for r in res:
-            try:
-                remove(r[1])
-                cursor.execute(f"DELETE FROM Files2Remove WHERE id={r[0]};")
-            except Exception as e:
-                logging.error(f"Error while deleting {r[0]} {r[1]}")
+    # if res is not None:
+    #     for r in res:
+    #         try:
+    #             remove(r[1])
+    #             cursor.execute(f"DELETE FROM Files2Remove WHERE id={r[0]};")
+    #         except Exception as e:
+    #             logging.error(f"Error while deleting {r[0]} {r[1]}")
 
     db_conn.commit()
 
@@ -323,3 +327,35 @@ def insert_tts(db_conn, user, content, symbols):
     except sqlite3.IntegrityError:
         logging.warning("DB: insert_tts: not added")
         return False, None
+
+
+def insert_stt(
+        db_conn,
+        user: dict, filename: str, content: str,
+        blocks: int, model: str, asr_time_ms: int):
+    """
+    Функция для добавления в БД нового запроса STT
+    """
+    cursor = db_conn.cursor()
+
+    data = (
+        user['user_id'],
+        filename,
+        strftime('%F %T'),
+        content,
+        blocks,
+        model,
+        asr_time_ms,
+    )
+    try:
+        cursor.execute('INSERT INTO STT '
+                       '(user_id, filename, datetime, content, '
+                       'blocks, model, asr_time_ms) '
+                       'VALUES (?, ?, ?, ?, ?, ?, ?);',
+                       data)
+        db_conn.commit()
+        logging.debug(f"DB: insert_stt: added id={cursor.lastrowid}")
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        logging.warning(f"DB: insert_tts: not added")
+        return False
