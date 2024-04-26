@@ -43,6 +43,8 @@ from final_stt import (
     ask_speech_kit_stt,
 )
 from final_tts import (
+    ask_silero_v4_tts,
+    ask_silero_tts,
     ask_speech_kit_tts,
 )
 from final_gpt import (
@@ -89,10 +91,13 @@ hideKeyboard = ReplyKeyboardRemove()
 
 # Кнопка для выхода из проверки TTS, STT (вдруг не хочет тратить ИИ-ресурсы)
 t_stop_test = 'Отказаться от проверки'
-mu_stop_test = ReplyKeyboardMarkup(
-    row_width=1,
-    resize_keyboard=True)
-mu_stop_test.add(*[t_stop_test])
+t_compare_tts = 'Сравнить модели'
+
+mu_test_stt = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+mu_test_stt.add(*[t_stop_test])
+
+mu_test_tts = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+mu_test_tts.add(*[t_compare_tts, t_stop_test])
 
 # Словарь с пользователями в памяти, чтобы не мучить БД
 user_data = {}
@@ -176,8 +181,9 @@ def handle_profile(m: Message):
     bot.send_message(
         user_id,
         'Сообщи текстом или голосом, сколько тебе лет. '
-        'Можешь ответить просто '
-        '<i>учусь в 10 классе</i> или <i>я на 2 курсе</i>.',
+        'Можешь написать/сказать просто: '
+        '<i>учусь в 10 классе</i> или <i>закончил школу 10 лет назад</i> '
+        'или <i>я на 2 курсе</i> ну и т.п. .',
         parse_mode='HTML',
         reply_markup=hideKeyboard)
     bot.register_next_step_handler(m, process_profile)
@@ -223,11 +229,13 @@ def process_profile(m: Message):
                       f"Сколько ему лет? Ответь одним целым числом, без слов")
         # случайно sync or async
         if randint(0, 2):
-            success, res = run(ask_freegpt_async(model=gpt_model, prompt=gpt_prompt))
+            success, res = run(ask_freegpt_async(
+                model=gpt_model, prompt=gpt_prompt))
         else:
-            success, res = ask_freegpt(model=gpt_model, prompt=gpt_prompt)
+            success, res = ask_freegpt(
+                model=gpt_model, prompt=gpt_prompt)
 
-        logging.info(f"MAIN: process_profile ask_freegpt: {res}")
+        logging.debug(f"MAIN: process_profile ask_freegpt: {res} / {result}")
         if success and res.isdigit():
             user_age = int(res)
             gpt_msg = ''
@@ -286,8 +294,108 @@ def handle_test_tts(m: Message):
         f"(или нажми <i>Отказаться от проверки</i>)\n\n"
         f"Проверка использует лимиты на символы: /stat ",
         parse_mode='HTML',
-        reply_markup=mu_stop_test)
+        reply_markup=mu_test_tts)
     bot.register_next_step_handler(m, process_test_tts)
+
+
+def text_to_voice(m: Message, all_modules: int) -> tuple:
+    """
+    Повторяющийся код для /test_tts, /idea,...
+    Надо преобразовать текст в голос.
+    Начинаем с бесплатного, если неудача, то платный.
+    Блоки TTS проверяем только для платного.
+    all_modules = 0 означает выйти при первом же успешном рапознавании
+    """
+    user_id = m.from_user.id
+
+    symbols = len(m.text)
+
+    result = {}
+
+    # Бесплатный модуль Silero v4; Лимиты не проверяем
+    tts_start = time_ns()
+    # silero возвращает путь к уже созданному wav-файлу
+    wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+    bot.send_chat_action(user_id, 'record_audio')
+    success, res = ask_silero_v4_tts(m.text, wav_file_path)
+    tts_time_ms = (time_ns() - tts_start) // 1000000
+
+    if success:
+        add_file2remove(db_conn, user_data[user_id], wav_file_path)
+        result['Silero v4'] = {'filename': wav_file_path,
+                               'tts_time_ms': tts_time_ms}
+        insert_tts(db_conn, user_data[user_id],
+                   content=m.text, filename=wav_file_path,
+                   symbols=symbols, model='Silero_v4',
+                   tts_time_ms=tts_time_ms)
+        if not all_modules:
+            return True, result
+    else:
+        # Если возникла ошибка, выводим сообщение
+        logging.warning(f"MAIN: process_test_tts: Silero v4 fail: {res}")
+
+    # Бесплатный модуль Silero v3.1; Лимиты не проверяем
+    tts_start = time_ns()
+    # silero возвращает путь к уже созданному wav-файлу
+    wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+    bot.send_chat_action(user_id, 'record_audio')
+    success, res = ask_silero_tts(m.text, wav_file_path)
+    tts_time_ms = (time_ns() - tts_start) // 1000000
+
+    if success:
+        add_file2remove(db_conn, user_data[user_id], wav_file_path)
+        result['Silero v3.1'] = {'filename': wav_file_path,
+                                 'tts_time_ms': tts_time_ms}
+        insert_tts(db_conn, user_data[user_id],
+                   content=m.text, filename=wav_file_path,
+                   symbols=symbols, model='Silero_v3.1',
+                   tts_time_ms=tts_time_ms)
+        if not all_modules:
+            return True, result
+    else:
+        # Если возникла ошибка, выводим сообщение
+        logging.warning(f"MAIN: process_test_tts: Silero v3.1 fail: {res}")
+
+    # Платный модуль SpeechKit. Перед ним нужно проверить лимиты
+    r1, r2 = is_limit(db_conn,
+                      param_name='P_TTS_SYMBOLS', user=user_data[user_id])
+    # Уже превышен или будет превышен?
+    if r1 or (r2 + symbols) > LIM['P_TTS_SYMBOLS']['value']:
+        error_msg = (f"СТОП! Будет превышен лимит P_TTS_SYMBOLS\n"
+                     f"{LIM['P_TTS_SYMBOLS']['descr']}\n"
+                     f"({r2} + {symbols}) >= {LIM['P_TTS_SYMBOLS']['value']}")
+        return False, {'error': error_msg}
+
+    r1, r2 = is_limit(db_conn,
+                      param_name='U_TTS_SYMBOLS', user=user_data[user_id])
+    # Уже превышен или будет превышен?
+    if r1 or (r2 + symbols) > LIM['U_TTS_SYMBOLS']['value']:
+        error_msg = (f"СТОП! Будет превышен лимит U_TTS_SYMBOLS\n"
+                     f"{LIM['U_TTS_SYMBOLS']['descr']}\n"
+                     f"({r2} + {symbols}) >= {LIM['U_TTS_SYMBOLS']['value']}")
+        return False, {'error': error_msg}
+
+    tts_start = time_ns()
+    bot.send_chat_action(user_id, 'record_audio')
+    success, res = ask_speech_kit_tts(m.text)
+    tts_time_ms = (time_ns() - tts_start) // 1000000
+
+    if success:
+        mp3_file_path = f"voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
+        with open(mp3_file_path, "wb") as f:
+            f.write(res)
+        add_file2remove(db_conn, user_data[user_id], mp3_file_path)
+        result['Yandex SpeechKit'] = {'filename': mp3_file_path,
+                                      'tts_time_ms': tts_time_ms}
+        insert_tts(db_conn, user_data[user_id],
+                   content=m.text, filename=mp3_file_path,
+                   symbols=symbols, model='SpeechKit',
+                   tts_time_ms=tts_time_ms)
+        return True, result
+    else:
+        # Если возникла ошибка, выводим сообщение
+        logging.warning(f"MAIN: process_test_tts: SpeechKit fail: {res}")
+        return False, {'error': f"Yandex SpeechKit error {res}"}
 
 
 def process_test_tts(m: Message):
@@ -297,6 +405,31 @@ def process_test_tts(m: Message):
     global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
+
+    if m.text == t_compare_tts:
+        bot.send_message(
+            user_id,
+            f"<b>Вот примеры трёх моделей Text-to-speech</b>\n\n"
+            f"Бесплатные <b>Silero v4 и v3.1</b> (на слабой локальной машине) "
+            f"и платная <b>Yandex SpeechKit</b> (на быстром сервере).\n\n"
+            f"У <b>Silero v4</b> авто-ударения и очень хорошая интонация!\n"
+            f"Попробуй свой текст: /test_tts",
+            parse_mode='HTML',
+            reply_markup=hideKeyboard)
+
+        bot.send_chat_action(user_id, 'upload_audio')
+        with open('voice/gvozdik-silero-v4.wav', "rb") as f:
+            bot.send_audio(
+                user_id, audio=f, title='Free TTS', performer='Silero v4')
+        bot.send_chat_action(user_id, 'upload_audio')
+        with open('voice/gvozdik-silero-v3.wav', "rb") as f:
+            bot.send_audio(
+                user_id, audio=f, title='Free TTS', performer='Silero v3.1')
+        bot.send_chat_action(user_id, 'upload_audio')
+        with open('voice/gvozdik-speechkit.mp3', "rb") as f:
+            bot.send_audio(
+                user_id, audio=f, title='Yandex TTS', performer='SpeechKit')
+        return
 
     if m.text == t_stop_test:
         bot.send_message(
@@ -316,30 +449,6 @@ def process_test_tts(m: Message):
 
     symbols = len(m.text)
 
-    r1, r2 = is_limit(db_conn,
-                      param_name='P_TTS_SYMBOLS', user=user_data[user_id])
-    # Уже превышен или будет превышен?
-    if r1 or (r2 + symbols) > LIM['P_TTS_SYMBOLS']['value']:
-        bot.send_message(
-            user_id,
-            f"СТОП! Будет превышен лимит P_TTS_SYMBOLS\n"
-            f"{LIM['P_TTS_SYMBOLS']['descr']}\n"
-            f"({r2} + {symbols}) >= {LIM['P_TTS_SYMBOLS']['value']}",
-            reply_markup=hideKeyboard)
-        return
-
-    r1, r2 = is_limit(db_conn,
-                      param_name='U_TTS_SYMBOLS', user=user_data[user_id])
-    # Уже превышен или будет превышен?
-    if r1 or (r2 + symbols) > LIM['U_TTS_SYMBOLS']['value']:
-        bot.send_message(
-            user_id,
-            f"СТОП! Будет превышен лимит U_TTS_SYMBOLS\n"
-            f"{LIM['U_TTS_SYMBOLS']['descr']}\n"
-            f"({r2} + {symbols}) >= {LIM['U_TTS_SYMBOLS']['value']}",
-            reply_markup=hideKeyboard)
-        return
-
     bot.send_message(
         user_id,
         f"Передаю в обработку...\n\n"
@@ -348,42 +457,25 @@ def process_test_tts(m: Message):
         parse_mode='HTML',
         reply_markup=hideKeyboard)
 
-    success, response = ask_speech_kit_tts(m.text)
+    success, res = text_to_voice(m, all_modules=True)
+
     if success:
-        insert_tts(db_conn, user_data[user_id], m.text, symbols)
-
-        # Если все хорошо, сохраняем аудио в файл
-        # audio_name = f"voice/tts-{user_id}.ogg"
-        # with open(audio_name, "wb") as f:
-        #     f.write(response)
-        # with open(audio_name, "rb") as f:
-        #     bot.send_audio(user_id, f)
-        #     f.close()
-        # add_file2remove(db_conn, user_data[user_id], audio_name)
-        try:
-            bot.send_audio(user_id, response, title='Проверка Text-to-Speech',
-                           caption='Запусти аудиофайл. Проверь звук, если не '
-                                   'слышно. Проверяй расход командой /stat')
-            logging.debug(f"MAIN: process_test_tts: OK for {user_id}")
-        except Exception as e:
-            logging.warning(f"MAIN: process_test_tts: {e} for {user_id}")
-
+        for r in res.keys():
+            with open(res[r]['filename'], "rb") as f:
+                bot.send_chat_action(user_id, 'upload_audio')
+                bot.send_audio(
+                    user_id, audio=f,
+                    title=f"TTS за {res[r]['tts_time_ms']} мс",
+                    performer={r},
+                    caption="Запусти аудиофайл. Проверь звук, если не слышно. "
+                            "Проверяй расход командой /stat")
     else:
-        # Если возникла ошибка, выводим сообщение
-        logging.warning(f"MAIN: process_test_tts: not success: {response}")
         bot.send_message(
             user_id,
-            f"Ошибка Yandex SpeechKit: <b>{response}</b>",
-            parse_mode="HTML",
+            f"<b>Ошибка!</b>\n\n{res['error']}\n\n"
+            f"Проверяй расход командой /stat",
+            parse_mode='HTML',
             reply_markup=hideKeyboard)
-        return
-
-    # bot.send_message(
-    #     user_id,
-    #     f'Запусти аудиофайл. Проверь звук, если ничего не слышно.\n'
-    #     f'Проверяй расход командой /stat',
-    #     parse_mode="HTML",
-    #     reply_markup=hideKeyboard)
 
 
 @bot.message_handler(commands=['test_stt'])
@@ -402,7 +494,7 @@ def handle_test_stt(m: Message):
         f"(или нажми <i>Отказаться от проверки</i>)\n\n"
         f"Проверка использует лимиты на блоки (1 блок = 15 сек): /stat ",
         parse_mode='HTML',
-        reply_markup=mu_stop_test)
+        reply_markup=mu_test_stt)
     bot.register_next_step_handler(m, process_test_stt)
 
 
@@ -432,23 +524,24 @@ def voice_obj_to_text(m: Message, voice_obj: File, all_modules: int) -> tuple:
     logging.debug(f"MAIN: process_test_stt: {voice_obj.file_path} {stt_blocks}")
 
     result = {}
-    # Бесплатный модуль SpeechRecognition
+
+    # Бесплатный модуль SpeechRecognition.Google
     asr_start = time_ns()
     success, res = ask_speech_recognition(wav_file_path)
     asr_time_ms = (time_ns() - asr_start) // 1000000
 
     # Проверяем успешность распознавания и выводим результат, сохраняем в БД
     if success:
-        result['SpeechRecognition'] = {'content': res,
-                                       'asr_time_ms': asr_time_ms}
+        result['SR.Google'] = {'content': res,
+                               'asr_time_ms': asr_time_ms}
         insert_stt(db_conn, user_data[user_id],
                    wav_file_path, content=res,
-                   blocks=stt_blocks, model='SR',
+                   blocks=stt_blocks, model='SR.Google',
                    asr_time_ms=asr_time_ms)
         if not all_modules:
             return True, result
     else:
-        logging.info(f"Модуль SpeechRecognition: не получилось распознать")
+        logging.info(f"Модуль SR.Google: не получилось распознать")
 
     # Платный модуль SpeechKit. Перед ним нужно проверить лимиты
     r1, r2 = is_limit(db_conn,
@@ -532,6 +625,7 @@ def process_test_stt(m: Message):
         reply_markup=hideKeyboard)
 
     # Для SpeechKit достаточно звуковых данных
+    bot.send_chat_action(user_id, 'typing')
     voice_obj = bot.get_file(m.voice.file_id)
     success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
 

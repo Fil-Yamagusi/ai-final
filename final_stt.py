@@ -21,25 +21,22 @@ import speech_recognition as sr
 from config import MAIN, TB, YANDEX, LIM
 
 
-def ask_speech_recognition(wav_file: str):
+def ask_speech_recognition(wav_file: str) -> tuple:
     """
-    Функция для перевода аудио, в формате ".wav" в текст
+    Функция для распознавания аудио формата ".wav" в текст
     """
 
     with sr.AudioFile(wav_file) as source:
         r = sr.Recognizer()
-        audio = r.record(source)
-        try:
-            return True, r.recognize_google(audio, language="ru_RU")
-        except Exception as e:
-            return False, e
+        r.adjust_for_ambient_noise(source, duration=0.5)
+        audio = r.record(source, duration=29)
 
-    # r = sr.Recognizer()
-    # message = sr.AudioFile(wav_file)
-    # with message as source:
-    #     audio = r.record(source)
-    # result = r.recognize_google(audio, language="ru_RU")
-    return result
+        try:
+            return True, r.recognize_google(audio, language='ru_RU')
+        except sr.UnknownValueError as e:
+            return False, "Speech Recognition could not understand audio: {e}"
+        except sr.RequestError as e:
+            return False, "SpeechRecognition service is unavailable: {e}"
 
 
 def ask_speech_kit_stt(data):

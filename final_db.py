@@ -172,7 +172,7 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max символов (TTS) на весь проект',
     #     'value': 55555, }
     if param_name == 'P_TTS_SYMBOLS':
-        query = 'SELECT sum(symbols) FROM TTS;'
+        query = "SELECT sum(symbols) FROM TTS WHERE model='SpeechKit';"
 
     # LIM['P_STT_BLOCKS'] = {
     #     'name': 'max блоков (STT) на весь проект',
@@ -210,7 +210,8 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max символов (TTS) на пользователя',
     #     'value': 7777, }
     if param_name == 'U_TTS_SYMBOLS':
-        query = ('SELECT sum(symbols) FROM TTS WHERE user_id = ?;')
+        query = ("SELECT sum(symbols) FROM TTS "
+                 "WHERE user_id = ? AND model='SpeechKit';")
         data = (user_id,)
 
     # LIM['U_STT_BLOCKS'] = {
@@ -300,27 +301,35 @@ def add_file2remove(db_conn, user, file_path):
              f"timens_added <= {old} AND timens_deleted IS NULL;")
     cursor.execute(query)
     res = cursor.fetchall()
-    # if res is not None:
-    #     for r in res:
-    #         try:
-    #             remove(r[1])
-    #             cursor.execute(f"DELETE FROM Files2Remove WHERE id={r[0]};")
-    #         except Exception as e:
-    #             logging.error(f"Error while deleting {r[0]} {r[1]}")
+    if res is not None:
+        for r in res:
+            try:
+                remove(r[1])
+                cursor.execute(f"DELETE FROM Files2Remove WHERE id={r[0]};")
+            except Exception as e:
+                logging.error(f"Error while deleting {r[0]} {r[1]}")
+
+    # Принудительно удаляем всё старше 10000 секунд
+    old = time_ns() - 10 ** 13
+    cursor.execute(f"DELETE FROM Files2Remove WHERE timens_added <= {old};")
 
     db_conn.commit()
 
 
-def insert_tts(db_conn, user, content, symbols):
+def insert_tts(db_conn,
+               user: dict, content: str, filename: str,
+               symbols: int, model: str, tts_time_ms: int):
     """
     Функция для добавления в БД нового запроса TTS
     """
     cursor = db_conn.cursor()
     try:
         cursor.execute('INSERT INTO TTS '
-                       '(user_id, datetime, content, symbols) '
-                       'VALUES (?, ?, ?, ?);',
-                       (user['user_id'], strftime('%F %T'), content, symbols))
+                       '(user_id, datetime, content, filename, '
+                       'symbols, model, tts_time_ms) '
+                       'VALUES (?, ?, ?, ?, ?, ?, ?);',
+                       (user['user_id'], strftime('%F %T'), content, filename,
+                        symbols, model, tts_time_ms))
         db_conn.commit()
         logging.debug(f"DB: insert_tts: added id={cursor.lastrowid}")
         return True, cursor.lastrowid
@@ -329,10 +338,9 @@ def insert_tts(db_conn, user, content, symbols):
         return False, None
 
 
-def insert_stt(
-        db_conn,
-        user: dict, filename: str, content: str,
-        blocks: int, model: str, asr_time_ms: int):
+def insert_stt(db_conn,
+               user: dict, filename: str, content: str,
+               blocks: int, model: str, asr_time_ms: int):
     """
     Функция для добавления в БД нового запроса STT
     """
