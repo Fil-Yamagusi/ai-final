@@ -13,7 +13,7 @@ __author__ = 'Firip Yamagusi'
 
 # standard
 from time import time_ns, strftime
-from random import randint
+from random import randint, choice
 from asyncio import run
 from math import ceil
 
@@ -163,7 +163,7 @@ def handle_start(m: Message):
         'Помогу тебе составить план дел на лето. Начни с команды /profile, '
         'а потом переходи к обсуждению новых дел: /idea\n\n'
         'Готовый список дел смотри в /show_plan\n\n'
-        'Подробнее про все команды: /help',
+        'Чуть подробнее про все команды: /help',
         parse_mode='HTML',
         reply_markup=hideKeyboard)
 
@@ -220,6 +220,7 @@ def process_profile(m: Message):
 
     # Если возраст получили числом, то просто базовая проверка
     user_age = 17  # по умолчанию
+    gpt_msg = ''
     if result.isdigit() and (10 <= int(result) <= 75):
         user_age = int(result)
     # иначе пробуем определить через GPT
@@ -242,7 +243,7 @@ def process_profile(m: Message):
         else:
             gpt_msg = "☹️ Не получилось определить возраст с помощью GPT.\n"
         if not (10 <= user_age <= 75):
-            user_age = 18
+            user_age = 17
 
     user_data[user_id]['user_age'] = user_age
     update_user(db_conn, user_data[user_id])
@@ -410,23 +411,25 @@ def process_test_tts(m: Message):
         bot.send_message(
             user_id,
             f"<b>Вот примеры трёх моделей Text-to-speech</b>\n\n"
-            f"Бесплатные <b>Silero v4 и v3.1</b> (на слабой локальной машине) "
+            f"Бесплатные <b>Silero v4</b> и <b>v3.1</b> "
+            f"(на слабой локальной машине) "
             f"и платная <b>Yandex SpeechKit</b> (на быстром сервере).\n\n"
             f"У <b>Silero v4</b> авто-ударения и очень хорошая интонация!\n"
             f"Попробуй свой текст: /test_tts",
             parse_mode='HTML',
             reply_markup=hideKeyboard)
 
+        example = choice(['gvozdik', 'sokol'])
         bot.send_chat_action(user_id, 'upload_audio')
-        with open('voice/gvozdik-silero-v4.wav', "rb") as f:
+        with open(f'voice/{example}-silero-v4.wav', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Free TTS', performer='Silero v4')
         bot.send_chat_action(user_id, 'upload_audio')
-        with open('voice/gvozdik-silero-v3.wav', "rb") as f:
+        with open(f'voice/{example}-silero-v3.wav', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Free TTS', performer='Silero v3.1')
         bot.send_chat_action(user_id, 'upload_audio')
-        with open('voice/gvozdik-speechkit.mp3', "rb") as f:
+        with open(f'voice/{example}-speechkit.mp3', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Yandex TTS', performer='SpeechKit')
         return
@@ -688,6 +691,62 @@ def handle_stat(m: Message):
         reply_markup=hideKeyboard)
 
 
+@bot.message_handler(commands=['help'])
+def handle_help(m: Message):
+    """
+    Чуть более подробная справка о проекте и ссылка на Гитхаб
+    """
+    global db_conn, user_data
+    user_id = m.from_user.id
+    check_user(m)
+
+    bot.send_message(
+        user_id,
+        f"<b>Справка чуть подробнее</b>\n\n"
+        f"Это — финальный проект на Яндекс.Практикуме. Бот-помощник, "
+        f"который помогает составить <b>план дел</b> на лето:\n"
+        f"- укажи в Профиле свой возраст;\n"
+        f"- потом в разделе Идея сообщи какое-то своё увлечение;\n"
+        f"- обсуди с GPT варианты <b>дела</b> (цель, задание) по увлечению;\n"
+        f"- выбранное дело добавь в <b>план</b>, повтори с другим увлечением;\n"
+        f"- в итоге получишь отличный план и проведёшь лето с пользой!\n\n"
+        f""
+        f"<b>/profile</b> - по умолчанию бот считает, что тебе 17 лет. "
+        f"Запусти эту команду, чтобы сообщить свой настоящий возраст. "
+        f"Указать можешь простым тестом, например: <i>19</i>, "
+        f"или эмодзи 1️⃣8️⃣, "
+        f"или сообщением типа <i>через 5 лет мне стукнет 20!</i>, "
+        f"или любым голосовым сообщением, из которого можно понять возраст, "
+        f"например <i>у меня возраст Христа</i>.\n\n"
+        f""
+        f"<b>/idea</b> - вход в пошаговое общение с GPT. "
+        f"Можно голосом, а можно и текстом. В итоге общения должно "
+        f"получиться очередное <b>дело</b> на лето. Это дело можно записать "
+        f"в <b>план</b> или отклонить.\n\n"
+        f""
+        f"<b>/show_plan</b> - посмотреть список уже придуманных дел (план). "
+        f"Некоторые дела из списка можно удалить, а можно вообще начать "
+        f"новый список!\n\n"
+        f""
+        f"<b>/stat</b> - Обязательно отслеживай расход "
+        f"ИИ-ресурсов (токены для GPT, символы для TTS, блоки для STT). "
+        f"Когда ты исчерпаешь свой лимит, соответствующее действие станет "
+        f"недоступным.\n\n"
+        f""
+        f"<b>/test_tts</b> - по ТЗ нужен режим тестирования TTS. Показывает "
+        f"результат платных и бесплатных моделей СИНТЕЗА речи. "
+        f"Помни, что ИИ-ресурсы тратятся из твоего лимита.\n\n"
+        f""
+        f"<b>/test_stt</b> - по ТЗ нужен режим тестирования STT. Показывает "
+        f"результат платных и бесплатных моделей РАСПОЗНАВАНИЯ речи. "
+        f"Помни, что ИИ-ресурсы тратятся из твоего лимита.\n\n"
+        f""
+        f"Ещё подробнее - <a href='https://github.com/Fil-Yamagusi/ai-final'>"
+        f"README на Github</a>\n\n",
+        parse_mode='HTML',
+        disable_web_page_preview=True,
+        reply_markup=hideKeyboard)
+
 # *********************************************************************
 # Запуск бота
 try:
@@ -701,16 +760,3 @@ db_conn.close()
 logging.warning(f"MAIN: DB close connection")
 
 logging.warning(f"MAIN: finish")
-
-#
-#
-# for limit in LIM.keys():
-#     is_limit(db_conn,
-#              param_name=limit,
-#              user=user_data[666],
-#              session_id=1)
-
-# [print("MAIN", val) for val in MAIN]
-# [print("TB", val) for val in TB]
-# [print("YANDEX", val) for val in YANDEX]
-# [print(val['descr'], val['value']) for val in LIM.values()]
