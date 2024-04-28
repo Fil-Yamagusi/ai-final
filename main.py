@@ -78,12 +78,13 @@ logging.warning(f"MAIN: start")
 # Подключаемся к БД и создаём таблицы (если не было). Без БД не сможем работать
 db_conn = get_db_connection(MAIN['db_filename'])
 if db_conn == False:
+    logging.error(f"MAIN: DB cannot open connection")
     exit(1)
-
 logging.warning(f"MAIN: DB open connection")
 
-r = create_db(db_conn)
-if r == False:
+if create_db(db_conn) == False:
+    logging.error(f"MAIN DB: cannot create tables")
+    db_conn.close()
     exit(2)
 
 bot = TeleBot(TB['TOKEN'])
@@ -92,26 +93,38 @@ logging.warning(f"TB: start: {TB['BOT_NAME']} | {TB['TOKEN']}")
 # Пустое меню, может пригодиться
 hideKeyboard = ReplyKeyboardRemove()
 
+# Текстовые фразы. В словаре, чтобы легче управлять
+T = {}
 # Кнопка для выхода из проверки TTS, STT (вдруг не хочет тратить ИИ-ресурсы)
-t_stop_test = 'Отказаться от проверки'
+# t_stop_test = 'Отказаться от проверки'
+T['t_stop_test'] = 'Отказаться от проверки'
 # Наглядный (готовый) пример сравнения моделей озвучки. Сравнить интонацию
-t_compare_tts = 'Сравнить модели'
+# t_compare_tts = 'Сравнить модели'
+T['t_compare_tts'] = 'Сравнить модели'
 # Для начала обсуждения идей
-t_random_idea = 'Чё-то туплю... давай рандомную идею!'
-t_idea_yes = 'Отлично, обсудим!'
-t_idea_no = 'Предложи другую'
+# t_random_idea = 'Чё-то туплю... давай рандомную идею!'
+# t_idea_yes = 'Да, эту обсудим!'
+# t_idea_no = 'Нет, предложи другую'
+T['t_random_idea'] = 'Чё-то туплю... давай рандомную идею!'
+T['t_idea_yes'] = 'Да, эту обсудим!'
+T['t_idea_no'] = 'Нет, предложи другую'
+T['t_idea_delete_yes'] = 'Удаляй, у меня новая!'
+T['t_idea_delete_no'] = 'Не удаляй, я случайно!'
 
 mu_test_stt = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-mu_test_stt.add(*[t_stop_test])
+mu_test_stt.add(*[T['t_stop_test']])
 
 mu_test_tts = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-mu_test_tts.add(*[t_compare_tts, t_stop_test])
+mu_test_tts.add(*[T['t_compare_tts'], T['t_stop_test']])
 
 mu_idea = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-mu_idea.add(*[t_idea_yes, t_idea_no])
+mu_idea.add(*[T['t_idea_yes'], T['t_idea_no']])
+
+mu_idea_delete = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+mu_idea_delete.add(*[T['t_idea_delete_yes'], T['t_idea_delete_no']])
 
 mu_random_idea = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-mu_random_idea.add(*[t_random_idea])
+mu_random_idea.add(*[T['t_random_idea']])
 
 # Словарь с пользователями в памяти, чтобы не мучить БД
 user_data = {}
@@ -159,6 +172,7 @@ def check_user(m):
         # Для общения с GPT промежуточные статусы
         user_data[user_id]['status'] = 0
         user_data[user_id]['idea'] = ''
+        user_data[user_id]['dialog'] = []
 
         # но в БД добавим только с учётом ограчений из конфига
         if not create_user(db_conn, user_data[user_id]):
@@ -480,19 +494,31 @@ def handle_idea(m: Message):
     user_id = m.from_user.id
     check_user(m)
 
+    # Если уже идёт обсуждение, то предложить удалить текущую идею
+    if user_data[user_id]['status'] > 0:
+        bot.send_message(
+            user_id,
+            f"<b>Погоди-ка...</b>\n\n"
+            f"Мы уже обсуждаем идею <i>{user_data[user_id]['idea']}</i>.\n"
+            "Продолжить обсуждать?",
+            parse_mode='HTML',
+            reply_markup=mu_idea_delete)
+        bot.register_next_step_handler(m, process_idea)
+        return
+
     # Исходное приветствие
     bot.send_message(
         user_id,
         f"<b>{user_data[user_id]['user_name']}, "
-        "сейчас придумаем тебе интересное дело на лето!</b>\n\n"
-        f"Судя по /profile, твой возраст: {user_data[user_id]['user_age']}.\n\n"
-        "Сообщи текстом или голосом, чем ты увлекаешься "
-        "(не забывай, что речь про лето).\n"
-        "Например: <i>Я люблю кататься на велосипеде</i>, или "
-        "<i>нравятся книги про приключения</i> или <i>пеку тортики</i>. "
-        "Я предложу подходящее дело. Вместе обсудим его, уточним, и "
-        "если оно тебе понравится, добавим в твой план.\n\n"
-        "Подробнее про все команды: /help",
+        "сейчас придумаем тебе интересные дела на лето!</b>\n\n"
+        f"Судя по профилю, твой возраст: {user_data[user_id]['user_age']}.\n\n"
+        "Сообщи текстом или голосом, чем ты увлекаешься.\n"
+        "Например:\n"
+        "- <i>Я люблю кататься на велосипеде</i>, или\n"
+        "- <i>Мне нравятся книги про приключения</i> или\n"
+        "- <i>Пеку тортики, как шеф!</i>\n\n"
+        "В ответ я предложу подходящее дело. Вместе обсудим его, уточним, "
+        "и если тебе понравится, добавим в летний план.",
         parse_mode='HTML',
         reply_markup=mu_random_idea)
     bot.register_next_step_handler(m, process_idea)
@@ -506,25 +532,50 @@ def process_idea(m: Message):
     user_id = m.from_user.id
     check_user(m)
 
-    # Если просит случайную идею (самое начало обсуждения)
-    if m.text == t_random_idea or m.text == t_idea_no:
+    # Если просит удалить текущую идею, которая УЖЕ в обсуждении
+    if user_data[user_id]['status'] > 0 and m.text == T['t_idea_delete_yes']:
         user_data[user_id]['status'] = 0
+        user_data[user_id]['idea'] = ''
+        user_data[user_id]['dialog'] = []
+        bot.send_message(
+            user_id,
+            f"<b>Удалил.</b>\n\n"
+            f"Давай по-новой: /idea\n",
+            parse_mode='HTML',
+            reply_markup=hideKeyboard)
+        return
+
+    # Если просит оставить текущую обсуждаемую идею (случайно нажал на новую)
+    if user_data[user_id]['status'] >0 and m.text == T['t_idea_delete_no']:
+        bot.send_message(
+            user_id,
+            f"<b>Случайно? Бывает...</b>\n\n"
+            f"Продолжаем обсуждать.\n",
+            parse_mode='HTML',
+            reply_markup=hideKeyboard)
+        bot.register_next_step_handler(m, process_idea)
+        return
+
+
+    # Если просит случайную идею (самое начало обсуждения)
+    if m.text == T['t_random_idea'] or m.text == T['t_idea_no']:
+        user_data[user_id]['status'] = 10
         user_data[user_id]['idea'] = choice(random_ideas)
+        user_data[user_id]['dialog'] = []
         bot.send_message(
             user_id,
             f"<b>Случайную идею для начала обсуждения?</b>\n\n"
-            f"Прелагаю: <i>{user_data[user_id]['idea'].lower()}</i>.\n",
+            f"Предлагаю: <i>{user_data[user_id]['idea'].lower()}</i>.\n",
             parse_mode='HTML',
             reply_markup=mu_idea)
         bot.register_next_step_handler(m, process_idea)
-        # тут нужен return или next_step никогда уже не вернётся сюда?
         return
 
     # Если выбрал сам текстом/голосом или согласился на предложенную
     if user_data[user_id]['status'] == 0:
 
         # это если на предложенную соглашался
-        if m.text == t_idea_yes:
+        if m.text == T['t_idea_yes']:
             user_data[user_id]['status'] = 10
             # Если хитрец юда зашёл без выбора идеи, то на тебе рандомную
             if not user_data[user_id]['idea']:
@@ -534,6 +585,7 @@ def process_idea(m: Message):
         elif m.text:
             user_data[user_id]['status'] = 10
             user_data[user_id]['idea'] = m.text
+            user_data[user_id]['dialog'] = []
 
         # это если сам голосом
         if m.voice:
@@ -541,15 +593,21 @@ def process_idea(m: Message):
             voice_obj = bot.get_file(m.voice.file_id)
             success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
             if success:
+                content = res[next(iter(res))]['content']
+                print(res, content)
+                # k, v = res.items()
+                # print(res[next(iter(res))['content']])
                 user_data[user_id]['status'] = 10
-                user_data[user_id]['idea'] = res.items()[0]['content']
+                user_data[user_id]['idea'] = content
+                user_data[user_id]['dialog'] = []
 
-        bot.send_message(
-            user_id,
-            f"<b>status & idea:</b>\n\n"
-            f"{user_data[user_id]['status']} {user_data[user_id]['idea']}",
-            parse_mode='HTML',
-            reply_markup=hideKeyboard)
+    print(user_data[user_id]['dialog'])
+    bot.send_message(
+        user_id,
+        f"<b>status & idea:</b>\n\n"
+        f"{user_data[user_id]['status']} {user_data[user_id]['idea']}\n",
+        parse_mode='HTML',
+        reply_markup=hideKeyboard)
 
 
 @bot.message_handler(commands=['test_tts'])
@@ -580,7 +638,7 @@ def process_test_tts(m: Message):
     user_id = m.from_user.id
     check_user(m)
 
-    if m.text == t_compare_tts:
+    if m.text == T['t_compare_tts']:
         bot.send_message(
             user_id,
             f"<b>Вот примеры трёх моделей Text-to-speech</b>\n\n"
@@ -607,7 +665,7 @@ def process_test_tts(m: Message):
                 user_id, audio=f, title='Yandex TTS', performer='SpeechKit')
         return
 
-    if m.text == t_stop_test:
+    if m.text == T['t_stop_test']:
         bot.send_message(
             user_id,
             f"Ок, вышли из проверки Text-to-speech.\n"
@@ -682,7 +740,7 @@ def process_test_stt(m: Message):
     user_id = m.from_user.id
     check_user(m)
 
-    if m.text == t_stop_test:
+    if m.text == T['t_stop_test']:
         bot.send_message(
             user_id,
             f"Ок, вышли из проверки Speech-to-text.\n"
