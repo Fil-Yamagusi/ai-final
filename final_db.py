@@ -253,12 +253,14 @@ def create_user(db_conn, user):
 
     # Если такой уже есть, то всё отлично, пускай пользуется
     if res is not None:
-        logging.debug(f"DB: create_user: user {user_id} already exists")
+        logging.info(f"DB: create_user: user {user_id} already exists")
         return True
 
     # Если такого нет, но превышено число пользователей на проект
-    if is_limit(db_conn, param_name='P_USERS', user=user):
-        logging.debug(f"DB: create_user: Can't create! Limit! {user_id}")
+    # TODO: При первой проверке не пустило нового пользователя telegram
+    # if is_limit(db_conn, param_name='P_USERS', user=user):
+    if False and is_limit(db_conn, param_name='P_USERS', user=user):
+        logging.info(f"DB: create_user: Can't create! Limit! {user_id}")
         return False
     else:
         query = ('INSERT INTO Users '
