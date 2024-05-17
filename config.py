@@ -6,7 +6,7 @@ MAIN = {}
 MAIN['test_mode'] = True
 MAIN['on_server'] = False
 if MAIN['on_server']:
-    HOME_DIR = '/home/student/ai-final/'  # путь к папке с проектом
+    HOME_DIR = '/home/student/ai-final/ai-final/'  # путь к папке с проектом
 else:
     HOME_DIR = ''  # путь к папке с проектом
 MAIN['log_filename'] = f'{HOME_DIR}final_log.txt'
