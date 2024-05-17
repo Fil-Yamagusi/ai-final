@@ -1121,12 +1121,13 @@ def handle_stat(m: Message):
     u_stat = append_stat(u_stat, 'U_TTS_SYMBOLS', user_data[user_id])
     u_stat = append_stat(u_stat, 'U_STT_BLOCKS', user_data[user_id])
 
+    p_stat_join = '\n'.join(p_stat)
     u_stat_join = '\n'.join(u_stat)
     bot.send_message(
         user_id,
         f"<b>ОГРАНИЧЕНИЯ И РАСХОД ИИ-РЕСУРСОВ</b>\n\n"
         f"<b>Весь проект:</b>\n\n"
-        f"{'\n'.join(p_stat)}\n\n"
+        f"{p_stat_join}\n\n"
         f"<b>Твой личный расход:</b>\n\n"
         f"{u_stat_join}",
         parse_mode='HTML',
