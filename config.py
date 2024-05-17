@@ -21,8 +21,8 @@ YANDEX = {}
 YANDEX['GPT_MODEL'] = _YANDEX['GPT_MODEL']  # 'yandexgpt-lite'
 YANDEX['FOLDER_ID'] = _YANDEX['FOLDER_ID']
 YANDEX['IAM_TOKEN'] = _YANDEX['IAM_TOKEN']
-YANDEX['MAX_ANSWER_TOKENS'] = 50 # длина от GPT в токенах
-YANDEX['MAX_ASK_LENGTH'] = 45 # длина запроса к GPT в символах
+YANDEX['MAX_ANSWER_TOKENS'] = 50  # длина от GPT в токенах
+YANDEX['MAX_ASK_LENGTH'] = 45  # длина запроса к GPT в символах
 # Системный промт, который объяснит нейросети, как правильно писать сценарий вместе с пользователем
 YANDEX['SYSTEM_PROMPT'] = ("Ты помогаешь составлять список интересных заданий на лето. "
                            "Тебе сообщают увлечение, а ты придумай ровно одно подходящее и очень конкретное задание. "
@@ -40,10 +40,10 @@ LIM['P_USERS'] = {
     'value': 10, }
 LIM['P_GPT_TOKENS'] = {
     'descr': 'max токенов (GPT) на весь проект',
-    'value': 22222, } # 22222
+    'value': 22222, }  # 22222
 LIM['P_TTS_SYMBOLS'] = {
     'descr': 'max символов (TTS) на весь проект',
-    'value': 55555, } # 55555
+    'value': 55555, }  # 55555
 LIM['P_STT_BLOCKS'] = {
     'descr': 'max блоков (STT) на весь проект',
     'value': 100, }
@@ -53,7 +53,7 @@ LIM['P_STT_BLOCKS'] = {
 # По количеству сессий и токенов в них не ограничиваем. Только общий лимит.
 LIM['U_GPT_TOKENS'] = {
     'descr': 'max токенов (GPT) во всех сессиях пользователя',
-    'value': 5432, } # 5432
+    'value': 5432, }  # 5432
 LIM['U_ASK_TOKENS'] = {
     'descr': 'max токенов в запросе пользователя к GPT',
     'value': 33, }
@@ -64,7 +64,7 @@ LIM['U_ANSWER_TOKENS'] = {
 # Ограничения TTS и STT на пользователя
 LIM['U_TTS_SYMBOLS'] = {
     'descr': 'max символов (TTS) на пользователя',
-    'value': 7777, } # 7777
+    'value': 7777, }  # 7777
 LIM['U_STT_BLOCKS'] = {
     'descr': 'max блоков (STT) на пользователя',
     'value': 30, }
