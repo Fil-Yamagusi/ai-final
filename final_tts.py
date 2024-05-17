@@ -14,7 +14,8 @@ from requests import post
 
 # third-party
 import logging
-import torch
+# 2024-05-18 пробую закомментить torch, чтобы хоть как-то запустить на сервере
+# import torch
 
 # custom
 # для авторизации и для ограничений
