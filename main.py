@@ -29,7 +29,8 @@ import soundfile as sf
 # для авторизации и для ограничений
 from config import (
     MAIN, TB, YANDEX, LIM,
-    random_ideas)
+    random_ideas
+)
 from final_db import (
     get_db_connection,
     create_db,
@@ -39,6 +40,11 @@ from final_db import (
     add_file2remove,
     insert_tts,
     insert_stt,
+    insert_prompt,
+    insert_idea,
+    delete_idea,
+    delete_all_ideas,
+    get_ideas_list,
 )
 from final_stt import (
     ask_speech_recognition,
@@ -51,8 +57,10 @@ from final_tts import (
 )
 from final_gpt import (
     count_tokens,
+    count_tokens_dialog,
     ask_freegpt_async,
     ask_freegpt,
+    ask_gpt,
 )
 
 if MAIN['test_mode']:  # Настройки для этапа тестирования
@@ -96,20 +104,16 @@ hideKeyboard = ReplyKeyboardRemove()
 # Текстовые фразы. В словаре, чтобы легче управлять
 T = {}
 # Кнопка для выхода из проверки TTS, STT (вдруг не хочет тратить ИИ-ресурсы)
-# t_stop_test = 'Отказаться от проверки'
 T['t_stop_test'] = 'Отказаться от проверки'
 # Наглядный (готовый) пример сравнения моделей озвучки. Сравнить интонацию
-# t_compare_tts = 'Сравнить модели'
 T['t_compare_tts'] = 'Сравнить модели'
 # Для начала обсуждения идей
-# t_random_idea = 'Чё-то туплю... давай рандомную идею!'
-# t_idea_yes = 'Да, эту обсудим!'
-# t_idea_no = 'Нет, предложи другую'
-T['t_random_idea'] = 'Чё-то туплю... давай рандомную идею!'
-T['t_idea_yes'] = 'Да, эту обсудим!'
-T['t_idea_no'] = 'Нет, предложи другую'
-T['t_idea_delete_yes'] = 'Удаляй, у меня новая!'
-T['t_idea_delete_no'] = 'Не удаляй, я случайно!'
+T['t_random_idea'] = 'Подскажи мне что-нибудь!'
+T['t_back_to_plan'] = 'Выйти назад к списку'
+T['t_idea_yes'] = 'Да, обсудим!'
+T['t_idea_no'] = 'Нет, другую'
+T['t_suggestion_add'] = '👍🏻 ОК, добавь в план'
+T['t_suggestion_decline'] = 'Не годится, давай другую'
 
 mu_test_stt = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
 mu_test_stt.add(*[T['t_stop_test']])
@@ -117,14 +121,14 @@ mu_test_stt.add(*[T['t_stop_test']])
 mu_test_tts = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
 mu_test_tts.add(*[T['t_compare_tts'], T['t_stop_test']])
 
-mu_idea = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-mu_idea.add(*[T['t_idea_yes'], T['t_idea_no']])
+mu_random_idea = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+mu_random_idea.add(*[T['t_random_idea'], T['t_back_to_plan']])
 
-mu_idea_delete = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-mu_idea_delete.add(*[T['t_idea_delete_yes'], T['t_idea_delete_no']])
+mu_idea = ReplyKeyboardMarkup(row_width=3, resize_keyboard=True)
+mu_idea.add(*[T['t_idea_yes'], T['t_idea_no'], T['t_back_to_plan']])
 
-mu_random_idea = ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-mu_random_idea.add(*[T['t_random_idea']])
+mu_suggestion = ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+mu_suggestion.add(*[T['t_suggestion_add'], T['t_suggestion_decline']])
 
 # Словарь с пользователями в памяти, чтобы не мучить БД
 user_data = {}
@@ -157,8 +161,6 @@ def check_user(m):
     Проверка наличия записи для данного пользователя
     Проверка ограничений разных пользователей (MAX_USERS)
     """
-    global user_data, db_conn
-
     user_id = m.from_user.id
 
     if user_id not in user_data:
@@ -283,9 +285,7 @@ def text_to_voice(m: Message, all_modules: int) -> tuple:
     all_modules = 0 означает выйти при первом же успешном рапознавании
     """
     user_id = m.from_user.id
-
     symbols = len(m.text)
-
     result = {}
 
     # Бесплатный модуль Silero v4; Лимиты не проверяем
@@ -387,7 +387,8 @@ def handle_start(m: Message):
     bot.send_message(
         user_id,
         '✌🏻 <b>Привет! Я — бот с искусственным интеллектом.</b>\n\n'
-        'Помогу тебе составить план дел на лето. Начни с команды /profile, '
+        'Помогу тебе составить план дел на лето.\n'
+        'Начни с команды /profile,\n'
         'а потом переходи к обсуждению новых дел: /idea\n\n'
         'Готовый список дел смотри в /show_plan\n\n'
         'Чуть подробнее про все команды: /help',
@@ -422,7 +423,7 @@ def process_profile(m: Message):
     Голос расшифровываем через speech_recognition
     Дальше фразу даём GPT, чтобы она предположила примерный возраст
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -484,138 +485,349 @@ def process_profile(m: Message):
         reply_markup=hideKeyboard)
 
 
-@bot.message_handler(commands=['idea'])
-def handle_idea(m: Message):
+@bot.message_handler(func=lambda m: m.text == T['t_back_to_plan'], content_types=["text"])
+@bot.message_handler(commands=['show_plan'])
+def handle_show_plan(m: Message):
     """
-    Обработчик команды /idea
-    Здесь в пошаговом режиме обсуждаем с ИИ новую идею.
-    При необходимости добавляем её в список дел
+    Показать список уже накопленных идей
     """
     user_id = m.from_user.id
     check_user(m)
 
-    # Если уже идёт обсуждение, то предложить удалить текущую идею
-    if user_data[user_id]['status'] > 0:
-        bot.send_message(
-            user_id,
-            f"<b>Погоди-ка...</b>\n\n"
-            f"Мы уже обсуждаем идею <i>{user_data[user_id]['idea']}</i>.\n"
-            "Продолжить обсуждать?",
-            parse_mode='HTML',
-            reply_markup=mu_idea_delete)
-        bot.register_next_step_handler(m, process_idea)
-        return
+    ideas = get_ideas_list(db_conn, user_data[user_id])
+    if len(ideas) == 0:
+        ideas_str = "Пусто"
+    else:
+        ideas_str = "- " + "\n- ".join(ideas)
 
-    # Исходное приветствие
+    bot.send_message(
+        user_id,
+        f"<b>Ваш план на лето</b>\n\n"
+        f"{ideas_str}\n\n"
+        f"Продолжить составлять план: /idea",
+        parse_mode='HTML',
+        reply_markup=hideKeyboard)
+
+
+@bot.message_handler(commands=['idea'])
+def handle_idea(m: Message):
+    """
+    Здесь в пошаговом режиме обсуждаем с ИИ новую идею.
+    """
+    user_id = m.from_user.id
+    check_user(m)
+
     bot.send_message(
         user_id,
         f"<b>{user_data[user_id]['user_name']}, "
         "сейчас придумаем тебе интересные дела на лето!</b>\n\n"
-        f"Судя по профилю, твой возраст: {user_data[user_id]['user_age']}.\n\n"
-        "Сообщи текстом или голосом, чем ты увлекаешься.\n"
-        "Например:\n"
-        "- <i>Я люблю кататься на велосипеде</i>, или\n"
-        "- <i>Мне нравятся книги про приключения</i> или\n"
-        "- <i>Пеку тортики, как шеф!</i>\n\n"
+        f"В профиле твой возраст: <b>{user_data[user_id]['user_age']}</b>\n\n"
+        "Сообщи текстом или голосом, что ты любишь. Например:\n"
+        "- <i>кататься на велосипеде</i>, или\n"
+        "- <i>книги про приключения</i> или\n"
+        "- <i>пеку тортики, как шеф!</i>\n\n"
         "В ответ я предложу подходящее дело. Вместе обсудим его, уточним, "
         "и если тебе понравится, добавим в летний план.",
         parse_mode='HTML',
         reply_markup=mu_random_idea)
-    bot.register_next_step_handler(m, process_idea)
+    bot.register_next_step_handler(m, process_idea_1)
 
 
-def process_idea(m: Message):
+def process_idea_1(m: Message):
     """
-    Основная функция проекта, общение с GPT голосом/текстом
+    Принимаем от пользователя голосом или текстом; или свою рандомную предлагаем. Ждём подтверждения на обсуждение с GPT
     """
-    global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
+    user_data[user_id]['method'] = ''
+    error = False
 
-    # Если просит удалить текущую идею, которая УЖЕ в обсуждении
-    if user_data[user_id]['status'] > 0 and m.text == T['t_idea_delete_yes']:
-        user_data[user_id]['status'] = 0
-        user_data[user_id]['idea'] = ''
-        user_data[user_id]['dialog'] = []
-        bot.send_message(
-            user_id,
-            f"<b>Удалил.</b>\n\n"
-            f"Давай по-новой: /idea\n",
-            parse_mode='HTML',
-            reply_markup=hideKeyboard)
+    # Если хочет прервать выбор идеи - отправляем в собранный план
+    if m.text == T['t_back_to_plan']:
+        handle_show_plan(m)
         return
 
-    # Если просит оставить текущую обсуждаемую идею (случайно нажал на новую)
-    if user_data[user_id]['status'] >0 and m.text == T['t_idea_delete_no']:
+    # Если текстом прислал свою идею или попросил нашу рандомную
+    if m.text:
+        user_data[user_id]['method'] = 'text'
+
+        if m.text == T['t_random_idea']:
+            result_msg = choice(random_ideas)
+        else:
+            result_msg = m.text
+
+    if m.voice:
+        user_data[user_id]['method'] = 'voice'
+
+        bot.send_chat_action(user_id, 'typing')
+        voice_obj = bot.get_file(m.voice.file_id)
+        success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
+
+        if success:
+            result_msg = res[next(iter(res))]['content']
+        else:
+            result_msg = res['error']
+            error = True
+
+    if not error and len(result_msg) > YANDEX['MAX_ASK_LENGTH']:
+        result_msg = f"Слишком длинный запрос к GPT, уменьши до {YANDEX['MAX_ASK_LENGTH']} симв.\n(<i>{result_msg}</i>)"
+        error = True
+
+    if error:
         bot.send_message(
             user_id,
-            f"<b>Случайно? Бывает...</b>\n\n"
-            f"Продолжаем обсуждать.\n",
+            f"<b>Ошибка:</b>\n"
+            f"{result_msg}\n\n"
+            f"Попробуй ещё раз: /idea",
             parse_mode='HTML',
             reply_markup=hideKeyboard)
-        bot.register_next_step_handler(m, process_idea)
-        return
-
-
-    # Если просит случайную идею (самое начало обсуждения)
-    if m.text == T['t_random_idea'] or m.text == T['t_idea_no']:
-        user_data[user_id]['status'] = 10
-        user_data[user_id]['idea'] = choice(random_ideas)
-        user_data[user_id]['dialog'] = []
+    else:
+        user_data[user_id]['idea'] = result_msg
         bot.send_message(
             user_id,
-            f"<b>Случайную идею для начала обсуждения?</b>\n\n"
-            f"Предлагаю: <i>{user_data[user_id]['idea'].lower()}</i>.\n",
+            f"<b>Новая идея:</b>\n\n"
+            f"{user_data[user_id]['idea']}\n\n"
+            f"Обсудим идею с ИИ-помощником?\n",
             parse_mode='HTML',
             reply_markup=mu_idea)
-        bot.register_next_step_handler(m, process_idea)
+        bot.register_next_step_handler(m, process_idea_2)
+
+
+def process_idea_2(m: Message):
+    """
+    Второй шаг обсуждения ибеи: передаём её в GPT
+    """
+    user_id = m.from_user.id
+    check_user(m)
+    error = False
+
+    # Если хочет прервать выбор идеи - отправляем в собранный план
+    if m.text == T['t_idea_no']:
+        handle_idea(m)
         return
 
-    # Если выбрал сам текстом/голосом или согласился на предложенную
-    if user_data[user_id]['status'] == 0:
+    # Если хочет прервать выбор идеи - отправляем в собранный план
+    if m.text == T['t_back_to_plan']:
+        handle_show_plan(m)
+        return
 
-        # это если на предложенную соглашался
-        if m.text == T['t_idea_yes']:
-            user_data[user_id]['status'] = 10
-            # Если хитрец юда зашёл без выбора идеи, то на тебе рандомную
-            if not user_data[user_id]['idea']:
-                user_data[user_id]['idea'] = choice(random_ideas)
+    # При тестировании это сообщение кажется избыточным. Полезно при бесплатном медленном GPT
+    # if m.text == T['t_idea_yes']:
+    #     bot.send_message(
+    #         user_id,
+    #         f"<b>Выбор сделан!</b>\n"
+    #         f"идея: {user_data[user_id]['idea']}\n"
+    #         f"способ: {user_data[user_id]['method']}",
+    #         parse_mode='HTML',
+    #         reply_markup=hideKeyboard)
 
-        # это если сам текстом
-        elif m.text:
-            user_data[user_id]['status'] = 10
-            user_data[user_id]['idea'] = m.text
-            user_data[user_id]['dialog'] = []
+    # Добавляем системный промпт
+    user_data[user_id]['dialog'] = []
+    user_data[user_id]['dialog'].append({'role': 'system', 'text': YANDEX['SYSTEM_PROMPT']})
+    # Добавляем пользовательский промпт
+    user_prompt = f"Мой возраст: {user_data[user_id]['user_age']}. Мне нравится {user_data[user_id]['idea']}."
+    user_data[user_id]['dialog'].append({'role': 'user', 'text': user_prompt})
+    # print(user_data[user_id]['dialog'])
+    logging.warning(f"MAIN: GPT suggestion: {YANDEX['SYSTEM_PROMPT']}")
+    logging.warning(f"MAIN: GPT suggestion: {user_prompt}")
 
-        # это если сам голосом
-        if m.voice:
-            bot.send_chat_action(user_id, 'typing')
-            voice_obj = bot.get_file(m.voice.file_id)
-            success, res = voice_obj_to_text(m, voice_obj, all_modules=False)
-            if success:
-                content = res[next(iter(res))]['content']
-                print(res, content)
-                # k, v = res.items()
-                # print(res[next(iter(res))['content']])
-                user_data[user_id]['status'] = 10
-                user_data[user_id]['idea'] = content
-                user_data[user_id]['dialog'] = []
+    # Сохраняю черновое название
+    # Отказался от сохранения чернового варианта и промежуточных статусов обсуждения
+    # insert_idea(db_conn, user_data[user_id], user_data[user_id]['idea'])
 
-    print(user_data[user_id]['dialog'])
+    system_prompt_tokens = count_tokens(YANDEX['SYSTEM_PROMPT'])
+    user_prompt_tokens = count_tokens(user_prompt)
+
+    # Если запрос нормально разбился на токены, то отправляем в GPT!
+    if system_prompt_tokens and user_prompt_tokens:
+        # Проверяем, достаточно ли у пользователя токенов? личный лимит
+        is_lim, cur_val = is_limit(db_conn, param_name='U_GPT_TOKENS', user=user_data[user_id])
+        # Уже превышен или будет превышен?
+        total_tokens = cur_val + system_prompt_tokens + user_prompt_tokens
+        if is_lim or total_tokens > LIM['U_GPT_TOKENS']['value']:
+            bot.send_message(
+                user_id,
+                f"<b>СТОП! Будет превышен лимит U_GPT_TOKENS</b>\n"
+                f"{LIM['U_GPT_TOKENS']['descr']}\n"
+                f"({cur_val} + {system_prompt_tokens + user_prompt_tokens}) >= {LIM['U_GPT_TOKENS']['value']}\n"
+                f"Следи за расходом ИИ-ресурсов: /stat",
+                parse_mode='HTML',
+                reply_markup=hideKeyboard)
+            return False
+
+        # Проверяем, достаточно ли у пользователя токенов? общий лимит
+        is_lim, cur_val = is_limit(db_conn, param_name='P_GPT_TOKENS', user=user_data[user_id])
+        # Уже превышен или будет превышен?
+        total_tokens = cur_val + system_prompt_tokens + user_prompt_tokens
+        if is_lim or total_tokens > LIM['P_GPT_TOKENS']['value']:
+            bot.send_message(
+                user_id,
+                f"<b>СТОП! Будет превышен лимит P_GPT_TOKENS</b>\n"
+                f"{LIM['P_GPT_TOKENS']['descr']}\n"
+                f"({cur_val} + {system_prompt_tokens + user_prompt_tokens}) >= {LIM['P_GPT_TOKENS']['value']}\n"
+                f"Следи за расходом ИИ-ресурсов: /stat",
+                parse_mode='HTML',
+                reply_markup=hideKeyboard)
+            return False
+
+        # Если лимиты позволяют, то учитываем расход и идём в GPT
+        insert_prompt(db_conn, user_data[user_id], 'system', YANDEX['SYSTEM_PROMPT'], system_prompt_tokens)
+        insert_prompt(db_conn, user_data[user_id], 'user', user_prompt, user_prompt_tokens)
+        user_data[user_id]['suggestion'] = ask_gpt(user_data[user_id])
+        mu = mu_suggestion
+        logging.warning(f"MAIN: GPT suggestion: {user_data[user_id]['suggestion']}")
+    else:
+        gpt_suggestion = "Запрос в GPT не отправил, т.к. не смог посчитать токены запросов."
+        logging.warning(f"MAIN: GPT suggestion ERROR: tokens counting")
+        error = True
+        mu = hideKeyboard
+
+    # Здесь должны вспомнить голос или текст, и вернуть в таком же
+    if user_data[user_id]['method'] == 'text':
+        bot.send_message(
+            user_id,
+            f"<b>Идея и предложение ИИ-помощника:</b>\n\n"
+            f"Идея: {user_data[user_id]['idea']}\n"
+            f"Способ: {user_data[user_id]['method']}\n"
+            f"Токенов: {system_prompt_tokens + user_prompt_tokens}\n\n"
+            f"Запрос:\n<i>{user_prompt}</i>\n\n"
+            f"Предложение:\n<i>{user_data[user_id]['suggestion']}</i>",
+            parse_mode='HTML',
+            reply_markup=mu)
+
+    if user_data[user_id]['method'] == 'voice':
+
+        symbols = len(user_data[user_id]['suggestion'])
+
+        # TTS с помощью Silero_v4
+        # wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+        # tts_start = time_ns()
+        # bot.send_chat_action(user_id, 'record_audio')
+        # success, res = ask_silero_v4_tts(user_data[user_id]['suggestion'], wav_file_path)
+        # tts_time_ms = (time_ns() - tts_start) // 1000000
+        # insert_tts(db_conn, user_data[user_id],
+        #            content=user_data[user_id]['suggestion'], filename=wav_file_path,
+        #            symbols=symbols, model='Silero_v4',
+        #            tts_time_ms=tts_time_ms)
+        #
+        # if success:
+        #     add_file2remove(db_conn, user_data[user_id], wav_file_path)
+        #     bot.send_chat_action(user_id, 'upload_audio')
+        #     with open(wav_file_path, "rb") as f:
+        #         bot.send_audio(
+        #             user_id, audio=f,
+        #             title=f"Предложение",
+        #             performer='ИИ-помощник',
+        #             caption={user_data[user_id]['suggestion']},
+        #             reply_markup=mu)
+        # else:
+        #     # Если возникла ошибка, выводим сообщение
+        #     bot.send_message(
+        #         user_id,
+        #         f"<b>Ошибка!</b>\n\n"
+        #         f"Не получилось озвучить ответ с помощью Silero v4",
+        #         parse_mode='HTML',
+        #         reply_markup=hideKeyboard)
+        #     logging.warning(f"MAIN: process_idea_2: Silero v4 fail")
+
+        # TTS С помощью Yandex SpeechKit
+
+        # Проверяем, достаточно ли у пользователя токенов? личный лимит
+        is_lim, cur_val = is_limit(db_conn, param_name='U_TTS_SYMBOLS', user=user_data[user_id])
+        # Уже превышен или будет превышен?
+        total_symbols = cur_val + symbols
+        if is_lim or total_symbols > LIM['U_TTS_SYMBOLS']['value']:
+            bot.send_message(
+                user_id,
+                f"<b>СТОП! Будет превышен лимит U_TTS_SYMBOLS</b>\n"
+                f"{LIM['U_TTS_SYMBOLS']['descr']}\n"
+                f"({cur_val} + {symbols}) >= {LIM['U_TTS_SYMBOLS']['value']}\n\n"
+                f"Теперь общайся с ИИ только текстом\n\n"
+                f"Следи за расходом ИИ-ресурсов: /stat",
+                parse_mode='HTML',
+                reply_markup=hideKeyboard)
+            return False
+
+        # Проверяем, достаточно ли у пользователя токенов? общий лимит
+        is_lim, cur_val = is_limit(db_conn, param_name='P_TTS_SYMBOLS', user=user_data[user_id])
+        # Уже превышен или будет превышен?
+        total_symbols = cur_val + symbols
+        if is_lim or total_symbols > LIM['P_TTS_SYMBOLS']['value']:
+            bot.send_message(
+                user_id,
+                f"<b>СТОП! Будет превышен лимит P_TTS_SYMBOLS</b>\n"
+                f"{LIM['P_TTS_SYMBOLS']['descr']}\n"
+                f"({cur_val} + {symbols}) >= {LIM['P_TTS_SYMBOLS']['value']}\n\n"
+                f"Теперь общайся с ИИ только текстом\n\n"
+                f"Следи за расходом ИИ-ресурсов: /stat",
+                parse_mode='HTML',
+                reply_markup=hideKeyboard)
+            return False
+
+        mp3_file_path = f"voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
+        tts_start = time_ns()
+        bot.send_chat_action(user_id, 'record_audio')
+        success, res = ask_speech_kit_tts(user_data[user_id]['suggestion'])
+        tts_time_ms = (time_ns() - tts_start) // 1000000
+        insert_tts(db_conn, user_data[user_id],
+                   content=user_data[user_id]['suggestion'], filename=mp3_file_path,
+                   symbols=symbols, model='SpeechKit',
+                   tts_time_ms=tts_time_ms)
+
+        if success:
+            with open(mp3_file_path, "wb") as f:
+                f.write(res)
+            add_file2remove(db_conn, user_data[user_id], mp3_file_path)
+            bot.send_chat_action(user_id, 'upload_audio')
+            with open(mp3_file_path, "rb") as f:
+                bot.send_audio(
+                    user_id, audio=f,
+                    title=f"Предложение",
+                    performer='ИИ-помощник',
+                    caption={user_data[user_id]['suggestion']},
+                    reply_markup=mu)
+
+        else:
+            # Если возникла ошибка, выводим сообщение
+            bot.send_message(
+                user_id,
+                f"<b>Ошибка!</b>\n\n"
+                f"Не получилось озвучить ответ с помощью Yandex SpeechKit",
+                parse_mode='HTML',
+                reply_markup=hideKeyboard)
+            logging.warning(f"MAIN: process_idea_2: Yandex SpeechKit fail")
+
+    bot.register_next_step_handler(m, process_idea_3)
+
+
+def process_idea_3(m: Message):
+    """
+    Третий шаг обсуждения ибеи: сохраняем в план или идём делать новую
+    """
+    user_id = m.from_user.id
+    check_user(m)
+    error = False
+
+    if m.text == T['t_suggestion_add']:
+        insert_idea(db_conn, user_data[user_id], user_data[user_id]['suggestion'])
+        suggestion_result = "Идея добавлена в план!"
+    else:
+        suggestion_result = "Эту идею отклонили!"
+
     bot.send_message(
         user_id,
-        f"<b>status & idea:</b>\n\n"
-        f"{user_data[user_id]['status']} {user_data[user_id]['idea']}\n",
+        f"<b>{suggestion_result}</b>\n\n"
+        f"Добавить идею: /idea\n"
+        f"Посмотреть план: /show_plan",
         parse_mode='HTML',
         reply_markup=hideKeyboard)
-
 
 @bot.message_handler(commands=['test_tts'])
 def handle_test_tts(m: Message):
     """
     по ТЗ: пользователь вводит текст, а бот выдаёт аудио с озвучиванием текста.
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -634,7 +846,7 @@ def process_test_tts(m: Message):
     """
     по ТЗ: пользователь вводит текст, а бот выдаёт аудио с озвучиванием текста.
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -717,7 +929,7 @@ def handle_test_stt(m: Message):
     """
     по ТЗ: пользователь отправляет аудио, а бот распознаёт текст.
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -736,7 +948,7 @@ def process_test_stt(m: Message):
     """
     по ТЗ: пользователь отправляет аудио, а бот распознаёт текст.
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -810,7 +1022,7 @@ def handle_stat(m: Message):
     """
     Статистика расходов ИИ-ресурсов и ограничений
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -841,7 +1053,7 @@ def handle_help(m: Message):
     """
     Чуть более подробная справка о проекте и ссылка на Гитхаб
     """
-    global db_conn, user_data
+    # global db_conn, user_data
     user_id = m.from_user.id
     check_user(m)
 
@@ -887,7 +1099,7 @@ def handle_help(m: Message):
         f"Помни, что ИИ-ресурсы тратятся из твоего лимита.\n\n"
         f""
         f"Ещё подробнее - <a href='https://github.com/Fil-Yamagusi/ai-final'>"
-        f"README на Github</a>\n\n",
+        f"README на Github</a>",
         parse_mode='HTML',
         disable_web_page_preview=True,
         reply_markup=hideKeyboard)

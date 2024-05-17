@@ -163,10 +163,12 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max токенов (GPT) на весь проект',
     #     'value': 22222, }
     if param_name == 'P_GPT_TOKENS':
-        query = ('SELECT SUM(max_tokens) FROM '
-                 '(SELECT MAX(tokens) AS max_tokens '
-                 'FROM Prompts '
-                 'GROUP BY session_id) AS max_tokens_by_session;')
+        # Изначально планировал другой способ подсчёта токенов
+        # query = ('SELECT SUM(max_tokens) FROM '
+        #          '(SELECT MAX(tokens) AS max_tokens '
+        #          'FROM Prompts '
+        #          'GROUP BY session_id) AS max_tokens_by_session;')
+        query = ('SELECT SUM(tokens) FROM Prompts;')
 
     # LIM['P_TTS_SYMBOLS'] = {
     #     'name': 'max символов (TTS) на весь проект',
@@ -185,11 +187,7 @@ def is_limit(db_conn, **kwargs):
     #     'name': 'max токенов (GPT) во всех сессиях пользователя',
     #     'value': 5432, }
     if param_name == 'U_GPT_TOKENS':
-        query = ('SELECT SUM(max_tokens) FROM '
-                 '(SELECT MAX(tokens) AS max_tokens '
-                 'FROM Prompts '
-                 'WHERE user_id = ?'
-                 'GROUP BY session_id) AS max_tokens_by_session;')
+        query = ('SELECT SUM(tokens) FROM Prompts WHERE user_id = ?;')
         data = (user_id,)
 
     # LIM['U_ASK_TOKENS'] = {
@@ -240,7 +238,7 @@ def is_limit(db_conn, **kwargs):
     return r, rr
 
 
-def create_user(db_conn, user):
+def create_user(db_conn, user: dict):
     """
     Добавляем пользователя в БД с учётом ограничений
     """
@@ -273,7 +271,7 @@ def create_user(db_conn, user):
         return True
 
 
-def update_user(db_conn, user):
+def update_user(db_conn, user: dict):
     """
     Обновляем данные о пользователе
     """
@@ -286,7 +284,81 @@ def update_user(db_conn, user):
     db_conn.commit()
 
 
-def add_file2remove(db_conn, user, file_path):
+def insert_prompt(db_conn, user: dict, role: str, content: str, tokens: int) -> int:
+    """
+    Добавляем запрос в Yandex GPT
+    """
+
+    cursor = db_conn.cursor()
+    query = ('INSERT INTO Prompts '
+             '(user_id, session_id, datetime, role, content, tokens) '
+             'VALUES (?, ?, ?, ?, ?, ?);')
+    cursor.execute(query,
+                   (user['user_id'], 1, strftime('%F %T'), role, content, tokens))
+    db_conn.commit()
+    logging.warning(f"DB: insert_prompt: New prompt is added {user['user_id']} id={cursor.lastrowid}")
+    return cursor.lastrowid
+
+
+def insert_idea(db_conn, user: dict, content: str) -> int:
+    """
+    Добавляем в БД идею в план пользователя
+    """
+
+    cursor = db_conn.cursor()
+    query = ('INSERT INTO Plan '
+             '(user_id, datetime, content, is_finished) '
+             'VALUES (?, ?, ?, ?);')
+    cursor.execute(query,
+                   (user['user_id'], strftime('%F %T'), content, 0))
+    db_conn.commit()
+    logging.warning(f"DB: insert_idea: New idea is added {user['user_id']} id={cursor.lastrowid}")
+    return cursor.lastrowid
+
+
+def delete_idea(db_conn, user: dict, id: int):
+    """
+    Удаляем идею с id из плана пользователя
+    """
+
+    cursor = db_conn.cursor()
+    query = (f'DELETE FROM Plan WHERE id={id} AND user_id={user["user_id"]};')
+    cursor.execute(query)
+    db_conn.commit()
+    logging.warning(f"DB: delete_idea: idea id={id} is deleted from user={user['user_id']}")
+
+
+def delete_all_ideas(db_conn, user: dict):
+    """
+    Удаляем все идеи из плана пользователя
+    """
+
+    cursor = db_conn.cursor()
+    query = (f'DELETE FROM Plan WHERE user_id={user["user_id"]};')
+    cursor.execute(query)
+    db_conn.commit()
+    logging.warning(f"DB: delete_all_ideas: deleted from user={user['user_id']}")
+
+
+def get_ideas_list(db_conn, user: dict) -> list:
+    """
+    Удаляем идею с id из плана пользователя
+    """
+
+    res = []
+    cursor = db_conn.cursor()
+    query = (f'SELECT content FROM Plan WHERE user_id={user["user_id"]} ORDER by datetime;')
+    try:
+        cursor.execute(query)
+        r = cursor.fetchall()
+        res = [idea[0] for idea in r]
+        logging.warning(f"DB: get_ideas_list: get all ideas: {len(res)} from user={user['user_id']}")
+    except Exception as e:
+        logging.warning(f"DB: get_ideas_list: empty list? user={user['user_id']}")
+    return res
+
+
+def add_file2remove(db_conn, user: dict, file_path: str):
     """
     Добавить файл в очередь на удаление, удалить старые
     Используется в /profile

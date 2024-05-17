@@ -53,7 +53,7 @@ def ask_freegpt(model: str, prompt: str) -> str:
         return False, e
 
 
-def count_tokens(text):
+def count_tokens(text) -> int:
     """
     Подсчитывает количество токенов в тексте, который потом в GPT отправлять
     """
@@ -67,10 +67,72 @@ def count_tokens(text):
         "maxTokens": LIM['U_ASK_TOKENS'],
         "text": text  # text - тот текст, в котором мы хотим посчитать токены
     }
-    return len(
-        post(
-            "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize",
-            json=data,
-            headers=headers
-        ).json()['tokens']
-    )
+    res = post(
+        "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize",
+        json=data,
+        headers=headers
+    ).json()
+    if 'tokens' in res:
+        return len(res['tokens'])
+    else:
+        return 0
+
+
+def count_tokens_dialog(dialog: list) -> int:
+    """
+    Подсчитывает количество токенов в диалоге, который потом в GPT отправлять
+    """
+
+    dialog_str = ""
+    for row in dialog:
+        dialog_str += row['text'] + " "
+
+    return count_tokens(dialog_str.strip())
+
+
+def ask_gpt(user: dict, mode='continue') -> str:
+    """
+    Многократный запрос к GPT. Есть стартовый запрос и продолжающие
+    """
+
+    url = f"https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    headers = {
+        'Authorization': f'Bearer {YANDEX["IAM_TOKEN"]}',
+        'Content-Type': 'application/json'
+    }
+    data = {
+        "modelUri": f"gpt://{YANDEX['FOLDER_ID']}/{YANDEX['GPT_MODEL']}/latest",
+        "completionOptions": {
+            "stream": False,
+            "temperature": 0.7,
+            "maxTokens": YANDEX['MAX_ANSWER_TOKENS']
+        },
+        "messages": user['dialog']
+    }
+
+    # Я сразу подготовил список в нужном формате
+    # collection = user['dialog']
+    # for row in collection:
+    #     data["messages"].append(
+    #         {
+    #             "role": row["role"],
+    #             "text": row['text']
+    #         }
+    #     )
+
+    # print(data)
+    try:
+        # Раскомментируй запрос, когда всё отладишь
+        response = post(url, headers=headers, json=data)
+        # print(response)
+        if response.status_code != 200:
+            result = f"Error(?) status code {response.status_code}"
+            logging.error(result)
+            return result
+        result = response.json()['result']['alternatives'][0]['message']['text']
+
+    except Exception as e:
+        result = f"Error '{e}' while requesting GPT"
+        logging.error(result)
+
+    return result
