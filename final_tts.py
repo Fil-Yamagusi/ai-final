@@ -18,7 +18,7 @@ import torch
 
 # custom
 # для авторизации и для ограничений
-from config import MAIN, TB, YANDEX, LIM
+from config import HOME_DIR, MAIN, TB, YANDEX, LIM
 
 
 def ask_silero_v4_tts(text: str, file_path: str) -> tuple:
@@ -30,7 +30,7 @@ def ask_silero_v4_tts(text: str, file_path: str) -> tuple:
 
     device = torch.device('cpu')
     torch.set_num_threads(4)
-    local_file = 'silero/model.pt'
+    local_file = f'{HOME_DIR}silero/model.pt'
 
     # Для лучшего звучания желательно ставить точку в конце предложения
     if text[-1] not in ['.', '!', '?']:

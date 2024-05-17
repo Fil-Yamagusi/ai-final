@@ -2,25 +2,34 @@
 from auth import _TB, _YANDEX
 
 #
+# HOME_DIR = '/home/student/ai-final/'  # путь к папке с проектом
+HOME_DIR = ''  # путь к папке с проектом
+IAM_TOKEN_PATH = f'{HOME_DIR}creds/iam_token.txt'  # файл для хранения iam_token
+FOLDER_ID_PATH = f'{HOME_DIR}creds/folder_id.txt'  # файл для хранения folder_id
+BOT_TOKEN_PATH = f'{HOME_DIR}creds/bot_token.txt'  # файл для хранения bot_token
+
+#
 # Настройки самой программы
 MAIN = {}
 MAIN['test_mode'] = True
-MAIN['log_filename'] = 'final_log.txt'
-MAIN['db_filename'] = 'final_sqlite.db'
+MAIN['on_server'] = False
+MAIN['log_filename'] = f'{HOME_DIR}final_log.txt'
+MAIN['db_filename'] = f'{HOME_DIR}final_sqlite.db'
 
 # **********************************************************
-# Ну вы поняли, какие переменные надо задать в файле auth.py
 # Telegram bot
 TB = {}
-TB['TOKEN'] = _TB['TOKEN']
+# до публикации на сервере простая инициализация
+# TB['TOKEN'] = _TB['TOKEN']
 TB['BOT_NAME'] = _TB['BOT_NAME']  # 'ИИ-помощник для планов на лето'
 TB['BOT_USERNAME'] = _TB['BOT_USERNAME']  # 'fil_fc_ai_pa_bot'
 
 # Yandex API
 YANDEX = {}
 YANDEX['GPT_MODEL'] = _YANDEX['GPT_MODEL']  # 'yandexgpt-lite'
-YANDEX['FOLDER_ID'] = _YANDEX['FOLDER_ID']
-YANDEX['IAM_TOKEN'] = _YANDEX['IAM_TOKEN']
+# до публикации на сервере простая инициализация
+# YANDEX['FOLDER_ID'] = _YANDEX['FOLDER_ID']
+# YANDEX['IAM_TOKEN'] = _YANDEX['IAM_TOKEN']
 YANDEX['MAX_ANSWER_TOKENS'] = 50  # длина от GPT в токенах
 YANDEX['MAX_ASK_LENGTH'] = 45  # длина запроса к GPT в символах
 # Системный промт, который объяснит нейросети, как правильно писать сценарий вместе с пользователем

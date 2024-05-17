@@ -18,7 +18,7 @@ import speech_recognition as sr
 
 # custom
 # для авторизации и для ограничений
-from config import MAIN, TB, YANDEX, LIM
+from config import HOME_DIR, MAIN, TB, YANDEX, LIM
 
 
 def ask_speech_recognition(wav_file: str) -> tuple:
@@ -28,7 +28,7 @@ def ask_speech_recognition(wav_file: str) -> tuple:
 
     with sr.AudioFile(wav_file) as source:
         r = sr.Recognizer()
-        r.adjust_for_ambient_noise(source, duration=0.5)
+        r.adjust_for_ambient_noise(source, duration=0.3)
         audio = r.record(source, duration=29)
 
         try:

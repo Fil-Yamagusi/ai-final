@@ -32,8 +32,10 @@ async def ask_freegpt_async(model: str, prompt: str) -> str:
         resp = await AsyncClient.create_completion(
             model,
             f"Instruction: Отвечай на русском. Prompt: {prompt}")
+        logging.warning(f"GPT: ask_freegpt_async: {resp}")
         return True, resp
     except Exception as e:
+        logging.warning(f"GPT: ask_freegpt_async ERROR: {e}")
         return False, e
 
 
@@ -48,8 +50,10 @@ def ask_freegpt(model: str, prompt: str) -> str:
         resp = Client.create_completion(
             "gpt3",
             f"Instruction: Отвечай на русском. Prompt: {prompt}")
+        logging.warning(f"GPT: ask_freegpt: {resp}")
         return True, resp
     except Exception as e:
+        logging.warning(f"GPT: ask_freegpt ERROR: {e}")
         return False, e
 
 
@@ -78,16 +82,16 @@ def count_tokens(text) -> int:
         return 0
 
 
-def count_tokens_dialog(dialog: list) -> int:
-    """
-    Подсчитывает количество токенов в диалоге, который потом в GPT отправлять
-    """
-
-    dialog_str = ""
-    for row in dialog:
-        dialog_str += row['text'] + " "
-
-    return count_tokens(dialog_str.strip())
+# def count_tokens_dialog(dialog: list) -> int:
+#     """
+#     Подсчитывает количество токенов в диалоге, который потом в GPT отправлять
+#     """
+#
+#     dialog_str = ""
+#     for row in dialog:
+#         dialog_str += row['text'] + " "
+#
+#     return count_tokens(dialog_str.strip())
 
 
 def ask_gpt(user: dict, mode='continue') -> str:

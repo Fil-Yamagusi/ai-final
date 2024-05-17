@@ -16,6 +16,8 @@ from time import time_ns, strftime
 from random import randint, choice
 from asyncio import run
 from math import ceil
+import json
+from requests import get
 
 # third-party
 import logging
@@ -28,7 +30,8 @@ import soundfile as sf
 # custom
 # для авторизации и для ограничений
 from config import (
-    MAIN, TB, YANDEX, LIM,
+    HOME_DIR, MAIN, TB, YANDEX, LIM,
+    IAM_TOKEN_PATH, FOLDER_ID_PATH, BOT_TOKEN_PATH,
     random_ideas
 )
 from final_db import (
@@ -57,7 +60,7 @@ from final_tts import (
 )
 from final_gpt import (
     count_tokens,
-    count_tokens_dialog,
+    # count_tokens_dialog,
     ask_freegpt_async,
     ask_freegpt,
     ask_gpt,
@@ -83,6 +86,79 @@ else:  # Настройки для опубликованного бота
 # ПОНЕСЛАСЬ! В АКАКУ!
 logging.warning(f"MAIN: start")
 
+
+def create_new_token():
+    """
+    получение нового iam_token
+    функция работает только на сервере Yandex
+    """
+    url = "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
+    headers = {
+        "Metadata-Flavor": "Google"
+    }
+    try:
+        response = get(url=url, headers=headers)
+        if response.status_code == 200:
+            token_data = response.json()  # вытаскиваем из ответа iam_token
+            # добавляем время истечения iam_token к текущему времени
+            token_data['expires_at'] = time.time() + token_data['expires_in']
+            # записываем iam_token в файл
+            with open(IAM_TOKEN_PATH, "w") as token_file:
+                json.dump(token_data, token_file)
+            logging.info(f"MAIN: create_new_token: iam_token - OK")
+        else:
+            logging.error(f"MAIN: create_new_token: iam_token - error: {response.status_code}")
+    except Exception as e:
+        logging.error(f"MAIN: create_new_token: iam_token - error: {e}")
+
+
+def get_iam_token():
+    """
+    чтение iam_token и folder_id из файла
+    """
+    try:
+        # чтение iam_token
+        with open(IAM_TOKEN_PATH, 'r') as f:
+            file_data = json.load(f)
+            expiration = datetime.strptime(file_data["expires_at"][:26], "%Y-%m-%dT%H:%M:%S.%f")
+        # если срок годности истёк
+        if False and expiration < datetime.now():
+            logging.warning(f"MAIN: get_creds: iam_token WARNING- Срок годности iam_token истёк")
+            # получаем новый iam_token
+            create_new_token()
+    except:
+        # если что-то пошло не так - получаем новый iam_token
+        logging.warning(f"MAIN: get_creds: iam_token except with open(IAM_TOKEN_PATH, 'r') as f:")
+        create_new_token()
+
+    # чтение iam_token
+    with open(IAM_TOKEN_PATH, 'r') as f:
+        return json.load(f)["access_token"]
+
+
+def get_folder_id():
+    """
+    чтение folder_id из файла
+    """
+    with open(FOLDER_ID_PATH, 'r') as f:
+        return f.read().strip()
+
+
+def get_bot_token():
+    """
+    чтение bot_token из файла
+    """
+    with open(BOT_TOKEN_PATH, 'r') as f:
+        return f.read().strip()
+
+
+# 2024-05-17 Для публикации на сервере новым способом задаём важные пароли
+YANDEX['IAM_TOKEN'] = get_iam_token()
+YANDEX['FOLDER_ID'] = get_folder_id()
+TB['TOKEN'] = get_bot_token()
+print(f"{IAM_TOKEN_PATH = }\n{BOT_TOKEN_PATH = }\n{FOLDER_ID_PATH =}")
+print(f"{YANDEX['IAM_TOKEN'] = }\n{YANDEX['FOLDER_ID'] = }\n{TB['TOKEN'] =}")
+
 # Подключаемся к БД и создаём таблицы (если не было). Без БД не сможем работать
 db_conn = get_db_connection(MAIN['db_filename'])
 if db_conn == False:
@@ -96,7 +172,7 @@ if create_db(db_conn) == False:
     exit(2)
 
 bot = TeleBot(TB['TOKEN'])
-logging.warning(f"TB: start: {TB['BOT_NAME']} | {TB['TOKEN']}")
+logging.warning(f"TB: start: {TB['BOT_NAME']} | TB['TOKEN']")
 
 # Пустое меню, может пригодиться
 hideKeyboard = ReplyKeyboardRemove()
@@ -172,9 +248,9 @@ def check_user(m):
         user_data[user_id]['user_age'] = 17
 
         # Для общения с GPT промежуточные статусы
-        user_data[user_id]['status'] = 0
+        # user_data[user_id]['status'] = 0
         user_data[user_id]['idea'] = ''
-        user_data[user_id]['dialog'] = []
+        # user_data[user_id]['dialog'] = []
 
         # но в БД добавим только с учётом ограчений из конфига
         if not create_user(db_conn, user_data[user_id]):
@@ -254,6 +330,8 @@ def voice_obj_to_text(m: Message, voice_obj: File, all_modules: int) -> tuple:
                      f"({r2} + {stt_blocks}) >= {LIM['U_STT_BLOCKS']['value']}")
         return False, {'error': error_msg}
 
+    if MAIN['on_server']:
+        YANDEX['IAM_TOKEN'] = get_iam_token()
     asr_start = time_ns()
     success, res = ask_speech_kit_stt(voice_file)
     # success, res = True, "SpeechKit закомментировал, идёт тест модуля SR"
@@ -291,7 +369,7 @@ def text_to_voice(m: Message, all_modules: int) -> tuple:
     # Бесплатный модуль Silero v4; Лимиты не проверяем
     tts_start = time_ns()
     # silero возвращает путь к уже созданному wav-файлу
-    wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+    wav_file_path = f"{HOME_DIR}voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
     bot.send_chat_action(user_id, 'record_audio')
     success, res = ask_silero_v4_tts(m.text, wav_file_path)
     tts_time_ms = (time_ns() - tts_start) // 1000000
@@ -313,7 +391,7 @@ def text_to_voice(m: Message, all_modules: int) -> tuple:
     # Бесплатный модуль Silero v3.1; Лимиты не проверяем
     tts_start = time_ns()
     # silero возвращает путь к уже созданному wav-файлу
-    wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+    wav_file_path = f"{HOME_DIR}voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
     bot.send_chat_action(user_id, 'record_audio')
     success, res = ask_silero_tts(m.text, wav_file_path)
     tts_time_ms = (time_ns() - tts_start) // 1000000
@@ -351,13 +429,15 @@ def text_to_voice(m: Message, all_modules: int) -> tuple:
                      f"({r2} + {symbols}) >= {LIM['U_TTS_SYMBOLS']['value']}")
         return False, {'error': error_msg}
 
+    if MAIN['on_server']:
+        YANDEX['IAM_TOKEN'] = get_iam_token()
     tts_start = time_ns()
     bot.send_chat_action(user_id, 'record_audio')
     success, res = ask_speech_kit_tts(m.text)
     tts_time_ms = (time_ns() - tts_start) // 1000000
 
     if success:
-        mp3_file_path = f"voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
+        mp3_file_path = f"{HOME_DIR}voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
         with open(mp3_file_path, "wb") as f:
             f.write(res)
         add_file2remove(db_conn, user_data[user_id], mp3_file_path)
@@ -628,13 +708,15 @@ def process_idea_2(m: Message):
     user_prompt = f"Мой возраст: {user_data[user_id]['user_age']}. Мне нравится {user_data[user_id]['idea']}."
     user_data[user_id]['dialog'].append({'role': 'user', 'text': user_prompt})
     # print(user_data[user_id]['dialog'])
-    logging.warning(f"MAIN: GPT suggestion: {YANDEX['SYSTEM_PROMPT']}")
-    logging.warning(f"MAIN: GPT suggestion: {user_prompt}")
+    logging.warning(f"MAIN: GPT SYSTEM_PROMPT: {YANDEX['SYSTEM_PROMPT']}")
+    logging.warning(f"MAIN: GPT user_prompt: {user_prompt}")
 
     # Сохраняю черновое название
     # Отказался от сохранения чернового варианта и промежуточных статусов обсуждения
     # insert_idea(db_conn, user_data[user_id], user_data[user_id]['idea'])
 
+    if MAIN['on_server']:
+        YANDEX['IAM_TOKEN'] = get_iam_token()
     system_prompt_tokens = count_tokens(YANDEX['SYSTEM_PROMPT'])
     user_prompt_tokens = count_tokens(user_prompt)
 
@@ -700,7 +782,7 @@ def process_idea_2(m: Message):
         symbols = len(user_data[user_id]['suggestion'])
 
         # TTS с помощью Silero_v4
-        # wav_file_path = f"voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
+        # wav_file_path = f"{HOME_DIR}voice/ftts-{user_id}-{time_ns() // 1000000}.wav"
         # tts_start = time_ns()
         # bot.send_chat_action(user_id, 'record_audio')
         # success, res = ask_silero_v4_tts(user_data[user_id]['suggestion'], wav_file_path)
@@ -764,7 +846,9 @@ def process_idea_2(m: Message):
                 reply_markup=hideKeyboard)
             return False
 
-        mp3_file_path = f"voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
+        if MAIN['on_server']:
+            YANDEX['IAM_TOKEN'] = get_iam_token()
+        mp3_file_path = f"{HOME_DIR}voice/tts-{user_id}-{time_ns() // 1000000}.mp3"
         tts_start = time_ns()
         bot.send_chat_action(user_id, 'record_audio')
         success, res = ask_speech_kit_tts(user_data[user_id]['suggestion'])
@@ -865,15 +949,15 @@ def process_test_tts(m: Message):
 
         example = choice(['gvozdik', 'sokol'])
         bot.send_chat_action(user_id, 'upload_audio')
-        with open(f'voice/{example}-silero-v4.wav', "rb") as f:
+        with open(f'{HOME_DIR}voice/{example}-silero-v4.wav', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Free TTS', performer='Silero v4')
         bot.send_chat_action(user_id, 'upload_audio')
-        with open(f'voice/{example}-silero-v3.wav', "rb") as f:
+        with open(f'{HOME_DIR}voice/{example}-silero-v3.wav', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Free TTS', performer='Silero v3.1')
         bot.send_chat_action(user_id, 'upload_audio')
-        with open(f'voice/{example}-speechkit.mp3', "rb") as f:
+        with open(f'{HOME_DIR}voice/{example}-speechkit.mp3', "rb") as f:
             bot.send_audio(
                 user_id, audio=f, title='Yandex TTS', performer='SpeechKit')
         return
@@ -899,9 +983,8 @@ def process_test_tts(m: Message):
     bot.send_message(
         user_id,
         f"Передаю в обработку...\n\n"
-        f"символов: <b>{symbols}</b>\n"
-        f"текст: <i>{m.text}</i>\n",
-        parse_mode='HTML',
+        f"символов: {symbols}\n"
+        f"текст: {m.text}\n",
         reply_markup=hideKeyboard)
 
     success, res = text_to_voice(m, all_modules=True)
