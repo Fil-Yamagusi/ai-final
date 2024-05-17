@@ -63,7 +63,7 @@ def count_tokens(text) -> int:
     """
 
     headers = {
-        'Authorization': f'Bearer {YANDEX['IAM_TOKEN']}',
+        'Authorization': f"Bearer {YANDEX['IAM_TOKEN']}",
         'Content-Type': 'application/json'
     }
     data = {
