@@ -2,7 +2,6 @@
 /.venv
 /_src
 /voice
-/auth.py
 /_draft.py
 /final_log.txt
 /*.zip
