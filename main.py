@@ -12,7 +12,7 @@ __version__ = '0.1'
 __author__ = 'Firip Yamagusi'
 
 # standard
-from time import time_ns, strftime
+from time import time_ns, strftime, time
 from random import randint, choice
 from asyncio import run
 from math import ceil
@@ -101,7 +101,7 @@ def create_new_token():
         if response.status_code == 200:
             token_data = response.json()  # вытаскиваем из ответа iam_token
             # добавляем время истечения iam_token к текущему времени
-            token_data['expires_at'] = time.time() + token_data['expires_in']
+            token_data['expires_at'] = time() + token_data['expires_in']
             # записываем iam_token в файл
             with open(IAM_TOKEN_PATH, "w") as token_file:
                 json.dump(token_data, token_file)
