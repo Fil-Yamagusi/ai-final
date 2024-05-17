@@ -156,8 +156,8 @@ def get_bot_token():
 YANDEX['IAM_TOKEN'] = get_iam_token()
 YANDEX['FOLDER_ID'] = get_folder_id()
 TB['TOKEN'] = get_bot_token()
-print(f"{IAM_TOKEN_PATH = }\n{BOT_TOKEN_PATH = }\n{FOLDER_ID_PATH =}")
-print(f"{YANDEX['IAM_TOKEN'] = }\n{YANDEX['FOLDER_ID'] = }\n{TB['TOKEN'] =}")
+print(f"{IAM_TOKEN_PATH}\n{BOT_TOKEN_PATH}\n{FOLDER_ID_PATH}")
+print(f"{YANDEX['IAM_TOKEN']}\n{YANDEX['FOLDER_ID']}\n{TB['TOKEN']}")
 
 # Подключаемся к БД и создаём таблицы (если не было). Без БД не сможем работать
 db_conn = get_db_connection(MAIN['db_filename'])
@@ -1121,13 +1121,14 @@ def handle_stat(m: Message):
     u_stat = append_stat(u_stat, 'U_TTS_SYMBOLS', user_data[user_id])
     u_stat = append_stat(u_stat, 'U_STT_BLOCKS', user_data[user_id])
 
+    u_stat_join = '\n'.join(u_stat)
     bot.send_message(
         user_id,
         f"<b>ОГРАНИЧЕНИЯ И РАСХОД ИИ-РЕСУРСОВ</b>\n\n"
         f"<b>Весь проект:</b>\n\n"
         f"{'\n'.join(p_stat)}\n\n"
         f"<b>Твой личный расход:</b>\n\n"
-        f"{'\n'.join(u_stat)}",
+        f"{u_stat_join}",
         parse_mode='HTML',
         reply_markup=hideKeyboard)
 
