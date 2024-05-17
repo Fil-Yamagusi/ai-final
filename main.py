@@ -277,7 +277,7 @@ def voice_obj_to_text(m: Message, voice_obj: File, all_modules: int) -> tuple:
     user_id = m.from_user.id
 
     # для SpeechRecognition нужен WAV
-    ogg_file_path = voice_obj.file_path
+    ogg_file_path = HOME_DIR + voice_obj.file_path
     voice_file = bot.download_file(ogg_file_path)
 
     with open(ogg_file_path, 'wb') as ogg_file:
