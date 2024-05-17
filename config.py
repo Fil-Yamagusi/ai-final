@@ -1,25 +1,24 @@
 # top-secret passwords
 from auth import _TB, _YANDEX
 
-#
-# HOME_DIR = '/home/student/ai-final/'  # путь к папке с проектом
-HOME_DIR = ''  # путь к папке с проектом
-IAM_TOKEN_PATH = f'{HOME_DIR}creds/iam_token.txt'  # файл для хранения iam_token
-FOLDER_ID_PATH = f'{HOME_DIR}creds/folder_id.txt'  # файл для хранения folder_id
-BOT_TOKEN_PATH = f'{HOME_DIR}creds/bot_token.txt'  # файл для хранения bot_token
-
-#
 # Настройки самой программы
 MAIN = {}
 MAIN['test_mode'] = True
 MAIN['on_server'] = False
+if MAIN['on_server']:
+    HOME_DIR = '/home/student/ai-final/'  # путь к папке с проектом
+else:
+    HOME_DIR = ''  # путь к папке с проектом
 MAIN['log_filename'] = f'{HOME_DIR}final_log.txt'
 MAIN['db_filename'] = f'{HOME_DIR}final_sqlite.db'
 
-# **********************************************************
+IAM_TOKEN_PATH = f'{HOME_DIR}creds/iam_token.txt'  # файл для хранения iam_token
+FOLDER_ID_PATH = f'{HOME_DIR}creds/folder_id.txt'  # файл для хранения folder_id
+BOT_TOKEN_PATH = f'{HOME_DIR}creds/bot_token.txt'  # файл для хранения bot_token
+
 # Telegram bot
 TB = {}
-# до публикации на сервере простая инициализация
+# до публикации на сервере была простая инициализация
 # TB['TOKEN'] = _TB['TOKEN']
 TB['BOT_NAME'] = _TB['BOT_NAME']  # 'ИИ-помощник для планов на лето'
 TB['BOT_USERNAME'] = _TB['BOT_USERNAME']  # 'fil_fc_ai_pa_bot'
@@ -27,7 +26,7 @@ TB['BOT_USERNAME'] = _TB['BOT_USERNAME']  # 'fil_fc_ai_pa_bot'
 # Yandex API
 YANDEX = {}
 YANDEX['GPT_MODEL'] = _YANDEX['GPT_MODEL']  # 'yandexgpt-lite'
-# до публикации на сервере простая инициализация
+# до публикации на сервере была простая инициализация
 # YANDEX['FOLDER_ID'] = _YANDEX['FOLDER_ID']
 # YANDEX['IAM_TOKEN'] = _YANDEX['IAM_TOKEN']
 YANDEX['MAX_ANSWER_TOKENS'] = 50  # длина от GPT в токенах
